@@ -1,18 +1,14 @@
 import os
-import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 import openai
 import logging
 import traceback
 
-# Add the parent directory to Python path
-sys.path.append(str(Path(__file__).parent.parent))
-
-from ..src import Agent, AgentOptions
-from src.capability import Capability
+# Import from src package
+from src import Agent, AgentOptions, Capability  # All imports from src should be consistent
 
 load_dotenv()
 
