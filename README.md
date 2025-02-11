@@ -1,9 +1,27 @@
+"""
 # OpenServ Python SDK
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-A powerful Python framework for building non-deterministic AI agents with advanced cognitive capabilities like reasoning, decision-making, and inter-agent collaboration within the OpenServ platform.
+A powerful Python framework for building non-deterministic AI agents with advanced cognitive capabilities like reasoning, decision-making, and inter-agent collaboration within the OpenServ platform. Built with strong typing, extensible architecture, and a fully autonomous agent runtime.
+
+## Features
+
+- 🔌 Advanced cognitive capabilities with reasoning and decision-making
+- 🤝 Inter-agent collaboration and communication
+- 🔌 Extensible agent architecture with custom capabilities
+- 🔧 Fully autonomous agent runtime with shadow agents
+- 🌐 Framework-agnostic - integrate agents from any AI framework
+- ⛓️ Blockchain-agnostic - compatible with any chain implementation
+- 🤖 Task execution and chat message handling
+- 🔄 Asynchronous task management
+- 📁 File operations and management
+- 🤝 Smart human assistance integration
+- 📝 Strong type hints with Pydantic validation
+- 📊 Built-in logging and error handling
+- 🎯 Three levels of control for different development needs
 
 ## Installation
 
@@ -16,7 +34,7 @@ pip install openserv-sdk
 Create a simple agent with a greeting capability:
 
 ```python
-from openserv_sdk import Agent, AgentOptions
+from openserv_sdk import Agent, AgentOptions, Capability
 from pydantic import BaseModel, Field
 
 # Define parameter schema using Pydantic
@@ -66,6 +84,44 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
+## Framework Architecture
+
+### Framework & Blockchain Compatibility
+
+OpenServ is designed to be completely framework and blockchain agnostic, allowing you to:
+
+- Integrate agents built with any AI framework (e.g., LangChain, BabyAGI, Eliza, G.A.M.E, etc.)
+- Connect agents operating on any blockchain network
+- Mix and match different framework agents in the same workspace
+- Maintain full compatibility with your existing agent implementations
+
+### Shadow Agents
+
+Each agent is supported by two "shadow agents":
+
+- Decision-making agent for cognitive processing
+- Validation agent for output verification
+
+This ensures smarter and more reliable agent performance without additional development effort.
+
+### Control Levels
+
+OpenServ offers three levels of control to match your development needs:
+
+1. **Fully Autonomous (Level 1)**
+   - Only build your agent's capabilities
+   - OpenServ's "second brain" handles everything else
+   - Built-in shadow agents manage decision-making and validation
+
+2. **Guided Control (Level 2)**
+   - Natural language guidance for agent behavior
+   - Balanced approach between control and simplicity
+
+3. **Full Control (Level 3)**
+   - Complete customization of agent logic
+   - Custom validation mechanisms
+   - Override task and chat message handling
+
 ## Environment Variables
 
 | Variable | Description | Required | Default |
@@ -73,103 +129,9 @@ if __name__ == '__main__':
 | `OPENSERV_API_KEY` | Your OpenServ API key | Yes | - |
 | `OPENAI_API_KEY` | OpenAI API key | Yes* | - |
 | `PORT` | Server port | No | 7378 |
+| `LOG_LEVEL` | Logging level | No | INFO |
 
 *Required for OpenAI integration features
-
-## Core Concepts
-
-### Capabilities
-
-Capabilities are the building blocks of your agent. Each capability represents a specific function your agent can perform:
-
-```python
-from pydantic import BaseModel, Field
-from openserv_sdk import Agent, Capability
-
-# Define parameter schema
-class SummarizeParams(BaseModel):
-    text: str = Field(..., description="Text content to summarize")
-    max_length: int = Field(default=100, description="Maximum length of summary")
-
-async def summarize(params: dict, messages: list) -> str:
-    """Summarize text content."""
-    args = params['args']
-    # Your summarization logic here
-    return f"Summary of text ({len(args['text'])} chars): ..."
-
-# Add capability to agent
-agent.add_capability(
-    Capability(
-        name='summarize',
-        description='Summarize a piece of text',
-        schema=SummarizeParams,
-        run=summarize
-    )
-)
-```
-
-### Tasks
-
-Tasks are units of work that agents can execute:
-
-```python
-# Create a task
-task = await agent.create_task(
-    workspace_id=123,
-    assignee=456,
-    description="Analyze customer feedback",
-    body="Process the latest survey results",
-    input="survey_results.csv",
-    expected_output="A summary of key findings",
-    dependencies=[]
-)
-
-# Add progress logs
-await agent.add_log_to_task(
-    workspace_id=123,
-    task_id=task.id,
-    severity="info",
-    type="text",
-    body="Starting analysis..."
-)
-
-# Update task status
-await agent.update_task_status(
-    workspace_id=123,
-    task_id=task.id,
-    status="in-progress"
-)
-```
-
-### Chat Interactions
-
-Agents can participate in chat conversations:
-
-```python
-# Send a chat message
-await agent.send_chat_message(
-    workspace_id=123,
-    agent_id=456,
-    message="How can I assist you today?"
-)
-```
-
-### File Operations
-
-Agents can work with files in their workspace:
-
-```python
-# Upload a file
-await agent.upload_file(
-    workspace_id=123,
-    path="reports/analysis.txt",
-    file="Analysis results...",
-    task_ids=[456]
-)
-
-# Get workspace files
-files = await agent.get_files(workspace_id=123)
-```
 
 ## Examples
 
@@ -185,3 +147,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 ---
 
 Built with ❤️ by [OpenServ Labs](https://openserv.ai)
+"""
