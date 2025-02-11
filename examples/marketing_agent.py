@@ -7,8 +7,8 @@ import openai
 import logging
 import traceback
 
-# Import from src package
-from src import Agent, AgentOptions, Capability  # All imports from src should be consistent
+# Change to relative import
+from ..src import Agent, AgentOptions, Capability
 
 load_dotenv()
 
@@ -131,7 +131,8 @@ async def create_marketing_agent() -> Agent:
         AgentOptions(
             system_prompt=system_prompt_path.read_text(),
             api_key=os.getenv('OPENSERV_API_KEY'),
-            openai_api_key=os.getenv('OPENAI_API_KEY')
+            openai_api_key=os.getenv('OPENAI_API_KEY'),
+            port=7379  # Add different port
         )
     )
 

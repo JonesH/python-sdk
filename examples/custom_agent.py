@@ -2,8 +2,8 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, Any
 
-from src import Agent, AgentOptions
-from src.types import RespondChatMessageAction
+from ..src import Agent, AgentOptions
+from ..src.types import RespondChatMessageAction
 
 load_dotenv()
 
