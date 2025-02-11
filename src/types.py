@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union, Literal
+from typing import Optional, List, Dict, Any, Union, Literal, Callable
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -107,10 +107,18 @@ class ProcessParams(BaseModel):
     messages: List[Dict[str, str]]
 
 class AgentOptions(BaseModel):
+    """Options for configuring an agent."""
     system_prompt: str
-    api_key: Optional[str] = None
+    api_key: str
     openai_api_key: Optional[str] = None
     port: Optional[int] = None
+    host: Optional[str] = None
+    log_level: Optional[str] = 'info'
+    reload: Optional[bool] = False
+    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
+    platform_url: Optional[str] = 'https://api.openserv.ai'
+    runtime_url: Optional[str] = 'https://agents.openserv.ai'
+    model: Optional[str] = 'gpt-4'
 
 class GetFilesParams(BaseModel):
     workspace_id: int
@@ -193,3 +201,20 @@ class IntegrationCallRequest(BaseModel):
     workspace_id: int
     integration_id: str
     details: ProxyConfiguration 
+
+class EngagementMetrics(BaseModel):
+    """Social media engagement metrics."""
+    likes: int = Field(ge=0)
+    shares: int = Field(ge=0)
+    comments: int = Field(ge=0)
+    impressions: int = Field(ge=0)
+
+class SocialMediaPostParams(BaseModel):
+    """Parameters for creating a social media post."""
+    platform: str
+    topic: str
+
+class AnalyzeEngagementParams(BaseModel):
+    """Parameters for analyzing engagement metrics."""
+    platform: str
+    metrics: EngagementMetrics 

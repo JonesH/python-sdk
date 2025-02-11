@@ -50,7 +50,7 @@ class AgentServer:
         """Set the agent instance for request handling."""
         self._agent = agent
 
-    def start(self) -> None:
+    async def start(self) -> None:
         """Start the HTTP server."""
         logger.info("Agent server starting on port %s", self.config.port)
         
@@ -58,25 +58,19 @@ class AgentServer:
             self.app,
             host=self.config.host,
             port=self.config.port,
-            log_level="info"
+            log_level=self.config.log_level
         )
         
         self._server = uvicorn.Server(config)
         logger.info("Server configuration complete, starting server")
         
-        try:
-            # Run the server
-            self._server.run()
-        except Exception as e:
-            logger.error("Server error: %s", e)
-            raise
+        # Start the server in a background task
+        await self._server.serve()
 
-    async def shutdown(self) -> None:
+    async def stop(self) -> None:
         """Gracefully shut down the server."""
         if self._server:
             logger.info("Shutting down server...")
             self._server.should_exit = True
-            try:
-                await self._server.shutdown()
-            except Exception as e:
-                logger.error("Error during server shutdown: %s", e) 
+            await self._server.shutdown()
+            self._server = None 

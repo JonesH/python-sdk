@@ -8,11 +8,14 @@ import openai
 import asyncio
 import signal
 from pydantic import BaseModel
+import os
+import json
+import traceback
 
 # Configure logging to show INFO and above
 logging.basicConfig(level=logging.INFO)
 
-from .config import Config
+from .config import Config, APIConfig, OpenAIConfig
 from .client import OpenServClient, RuntimeClient
 from .server import AgentServer
 from .capability import Capability
@@ -53,39 +56,56 @@ class Agent:
     """
     
     def __init__(self, options: AgentOptions) -> None:
-        """Initialize the Agent with the given options."""
-        logger.info("Initializing Agent with options: %s", options.model_dump())
+        """Initialize the agent with options."""
+        self.config = Config(
+            api=APIConfig(
+                api_key=options.api_key,
+                platform_url=options.platform_url,
+                runtime_url=options.runtime_url
+            ),
+            openai=OpenAIConfig(
+                api_key=options.openai_api_key or os.getenv('OPENAI_API_KEY'),
+                model=options.model
+            ),
+            system_prompt=options.system_prompt,
+            port=options.port or 7378,
+            host=options.host or '0.0.0.0',
+            log_level=options.log_level or 'debug',
+            reload=options.reload or False
+        )
         
-        # Create configuration
-        self.config = Config.from_env(system_prompt=options.system_prompt)
-        if options.api_key:
-            self.config.api.api_key = options.api_key
-        if options.openai_api_key:
-            self.config.openai.api_key = options.openai_api_key
-        if options.port:
-            self.config.server.port = options.port
-            
-        # Validate configuration
         self.config.validate_api_key()
+        self.openai_client = openai.AsyncOpenAI(api_key=self.config.openai.api_key)
+        self.tools = []
+        self.on_error = options.on_error
         
         # Initialize components
-        self.tools: List[Capability[BaseModel]] = []
-        self._openai: Optional[openai.OpenAI] = None
-        self.api_client = OpenServClient(self.config.api)
-        self.runtime_client = RuntimeClient(self.config.api)
-        
-        # Set up server
         self.server = AgentServer(self.config.server)
         self.server.set_agent(self)
         
     @property
-    def openai_client(self) -> openai.OpenAI:
-        """Get or create the OpenAI client instance."""
-        if not self._openai:
-            if not self.config.openai.api_key:
-                raise ConfigurationError('OpenAI API key is required')
-            self._openai = openai.OpenAI(api_key=self.config.openai.api_key)
-        return self._openai
+    def api_client(self) -> OpenServClient:
+        """Get the API client instance."""
+        if not self._api_client:
+            self._api_client = OpenServClient(self.config.api)
+        return self._api_client
+
+    @api_client.setter
+    def api_client(self, client):
+        """Set the API client instance (for testing)."""
+        self._api_client = client
+
+    @property
+    def runtime_client(self) -> RuntimeClient:
+        """Get the runtime client instance."""
+        if not self._runtime_client:
+            self._runtime_client = RuntimeClient(self.config.api)
+        return self._runtime_client
+
+    @runtime_client.setter
+    def runtime_client(self, client):
+        """Set the runtime client instance (for testing)."""
+        self._runtime_client = client
 
     @property
     def openai_tools(self) -> List[Dict[str, Any]]:
@@ -102,27 +122,36 @@ class Agent:
     def add_capability(self, capability: Capability[T]) -> 'Agent':
         """Add a single capability to the agent."""
         if any(t.name == capability.name for t in self.tools):
-            raise ValueError(f'Tool with name "{capability.name}" already exists')
+            raise ValueError(f'Capability with name "{capability.name}" already exists')
+        
         self.tools.append(capability)
         return self
 
     def add_capabilities(self, capabilities: List[Capability[T]]) -> 'Agent':
         """Add multiple capabilities to the agent."""
+        # Check for duplicates first
+        names = [cap.name for cap in capabilities]
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate capability names found")
+            
         for capability in capabilities:
             self.add_capability(capability)
         return self
 
     async def process(self, params: ProcessParams) -> Dict[str, Any]:
         """Process a conversation with OpenAI."""
-        logger.info("Starting process with %d messages", len(params.messages))
         try:
-            current_messages = params.messages.copy()
-            max_iterations = 10
-            iteration_count = 0
+            if not self.config.openai.api_key:
+                raise ConfigurationError(
+                    'OpenAI API key is required for process(). Please provide it in options or set OPENAI_API_KEY environment variable.'
+                )
 
-            while iteration_count < max_iterations:
-                logger.debug("Process iteration %d/%d", iteration_count + 1, max_iterations)
-                
+            current_messages = params.messages.copy()
+            completion = None
+            iteration_count = 0
+            MAX_ITERATIONS = 10
+
+            while iteration_count < MAX_ITERATIONS:
                 completion = await self.openai_client.chat.completions.create(
                     model=self.config.openai.model,
                     messages=current_messages,
@@ -133,20 +162,19 @@ class Agent:
                     raise RuntimeError('No response from OpenAI')
 
                 last_message = completion.choices[0].message
-                logger.debug("Received message from OpenAI: %s", last_message)
 
-                if not last_message.tool_calls:
-                    logger.info("No tool calls requested, returning completion")
+                # If no tool calls, we're done
+                if not getattr(last_message, 'tool_calls', None):
                     return completion.model_dump()
 
+                # Process each tool call
                 tool_results = []
                 for tool_call in last_message.tool_calls:
                     if not tool_call.function:
                         raise RuntimeError('Tool call function is missing')
 
                     name = tool_call.function.name
-                    args = tool_call.function.arguments
-                    logger.info("Executing tool '%s' with args: %s", name, args)
+                    args = json.loads(tool_call.function.arguments)
 
                     try:
                         tool = next((t for t in self.tools if t.name == name), None)
@@ -154,26 +182,31 @@ class Agent:
                             raise RuntimeError(f'Tool "{name}" not found')
 
                         result = await tool.run({"args": args}, current_messages)
-                        logger.debug("Tool '%s' execution result: %s", name, result)
                         tool_results.append({
                             'role': 'tool',
                             'content': str(result),
                             'tool_call_id': tool_call.id
                         })
                     except Exception as error:
-                        logger.error("Tool execution failed: %s", str(error), exc_info=True)
+                        error_message = str(error)
+                        self.handle_error(error, {
+                            'tool_call': tool_call,
+                            'context': 'tool_execution'
+                        })
                         tool_results.append({
                             'role': 'tool',
-                            'content': str({'error': str(error)}),
+                            'content': json.dumps({'error': error_message}),
                             'tool_call_id': tool_call.id
                         })
 
-                current_messages.extend([last_message, *tool_results])
+                # Add messages to conversation
+                current_messages.append(last_message)
+                current_messages.extend(tool_results)
                 iteration_count += 1
 
             raise RuntimeError('Max iterations reached without completion')
         except Exception as error:
-            logger.error("Process failed: %s", str(error), exc_info=True)
+            self.handle_error(error, {'context': 'process'})
             raise
 
     async def handle_root_route(self, body: Dict[str, Any]) -> None:
@@ -196,51 +229,52 @@ class Agent:
             logger.error("Root route handler failed: %s", str(error), exc_info=True)
             raise
 
-    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle execution of a specific tool/capability."""
+    async def handle_tool_route(
+        self,
+        tool_name: str,
+        body: Optional[Dict[str, Any]] = None,
+        messages: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """Handle a tool route request."""
         try:
+            logger.info(f"Handling tool route: {tool_name}")
+            logger.debug(f"Request body: {body}")
+            
             tool = next((t for t in self.tools if t.name == tool_name), None)
             if not tool:
                 raise ValueError(f'Tool "{tool_name}" not found')
 
-            args = tool.schema.model_validate(body.get('args', {}))
-            messages = body.get('messages', [])
-            result = await tool.run(args, messages)
-            return {'result': result}
+            # Parse and validate args using the tool's schema
+            args = body.get('args', {}) if body else {}
+            validated_args = tool.schema.model_validate(args)
+            
+            logger.debug(f"Validated args: {validated_args}")
+            
+            result = await tool.run({"args": validated_args.model_dump()}, messages or [])
+            logger.info(f"Tool execution result: {result}")
+            
+            return {"result": result}
         except Exception as error:
-            logger.error("Tool route handler failed: %s", str(error), exc_info=True)
+            logger.error(f"Tool route handler failed: {str(error)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            self.handle_error(error, {
+                'request': {'tool': tool_name, 'body': body},
+                'context': 'handle_tool_route'
+            })
             raise
 
-    def start(self) -> None:
-        """Start the agent's HTTP server with signal handling."""
-        loop = asyncio.get_event_loop()
-        
-        def handle_signal(sig: int) -> None:
-            sig_name = signal.Signals(sig).name
-            logger.info("Received %s. Starting graceful shutdown...", sig_name)
-            # Schedule the shutdown coroutine
-            loop.create_task(self.stop())
-        
-        # Set up signal handlers
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
-            
-        self.server.start()
+    async def start(self) -> None:
+        """Start the agent server."""
+        if not self.server:
+            self.server = AgentServer(self.config.server)
+            self.server.set_agent(self)
+        await self.server.start()
 
     async def stop(self) -> None:
-        """Stop the agent and clean up resources."""
-        logger.info("Stopping server and closing clients...")
-        
-        try:
-            await self.server.shutdown()
-        except Exception as e:
-            logger.error("Error during server shutdown: %s", e)
-            
-        try:
-            await self.api_client.close()
-            await self.runtime_client.close()
-        except Exception as e:
-            logger.error("Error during client cleanup: %s", e)
+        """Stop the agent server."""
+        if self.server:
+            await self.server.stop()
+            self.server = None
 
     async def do_task(self, action: DoTaskAction) -> None:
         """Handle a task execution request."""
@@ -316,9 +350,14 @@ class Agent:
         })
         return response["data"]
 
-    async def get_tasks(self, workspace_id: int) -> Dict[str, Any]:
-        """Get tasks in a workspace."""
-        response = await self.api_client.get(f"/workspaces/{workspace_id}/tasks")
+    async def get_tasks(self, workspace_id: Union[int, GetTasksParams]) -> Dict[str, Any]:
+        """Gets a list of tasks in a workspace."""
+        if isinstance(workspace_id, GetTasksParams):
+            params = workspace_id
+        else:
+            params = GetTasksParams(workspace_id=workspace_id)
+
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/tasks")
         return response["data"]
 
     async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
@@ -342,12 +381,16 @@ class Agent:
         })
         return response["data"]
 
-    async def request_human_assistance(self, workspace_id: int, task_id: int, type: str, question: str) -> Dict[str, Any]:
-        """Request human assistance."""
-        response = await self.api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/human-assistance", {
-            "type": type,
-            "question": question
-        })
+    async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
+        """Requests human assistance for a task."""
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/human-assistance",
+            {
+                "type": params.type,
+                "question": params.question,
+                "agentDump": params.agent_dump
+            }
+        )
         return response["data"]
 
     async def get_task_detail(self, params: GetTaskDetailParams) -> Dict[str, Any]:
@@ -358,11 +401,6 @@ class Agent:
     async def get_agents(self, params: GetAgentsParams) -> Dict[str, Any]:
         """Gets a list of agents in a workspace."""
         response = await self.api_client.get(f"/workspaces/{params.workspace_id}/agents")
-        return response["data"]
-
-    async def get_tasks(self, params: GetTasksParams) -> Dict[str, Any]:
-        """Gets a list of tasks in a workspace."""
-        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/tasks")
         return response["data"]
 
     async def create_task(self, params: CreateTaskParams) -> Dict[str, Any]:
@@ -389,18 +427,6 @@ class Agent:
         )
         return response["data"]
 
-    async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
-        """Requests human assistance for a task."""
-        response = await self.api_client.post(
-            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/human-assistance",
-            {
-                "type": params.type,
-                "question": params.question,
-                "agentDump": params.agent_dump
-            }
-        )
-        return response["data"]
-
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Updates the status of a task."""
         response = await self.api_client.put(
@@ -421,3 +447,28 @@ class Agent:
             integration.details.model_dump()
         )
         return response["data"]
+
+    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert tools to OpenAI format."""
+        openai_tools = []
+        for tool in tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
+
+    def handle_error(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
+        """Default error handler that logs the error."""
+        handler = self.on_error or (
+            lambda err, ctx: logger.error(
+                "Error in agent operation",
+                extra={"error": str(err), **(ctx or {})}
+            )
+        )
+        handler(error, context)
