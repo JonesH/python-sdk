@@ -11,7 +11,7 @@ import traceback
 # Add the parent directory to Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src import Agent, AgentOptions
+from ..src import Agent, AgentOptions
 from src.capability import Capability
 
 load_dotenv()
