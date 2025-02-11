@@ -29,7 +29,7 @@ from openserv_sdk.exceptions import (
     RuntimeError
 )
 
-logger = logging.getLogger(__name__)
+__version__ = '0.1.0'
 
 __all__ = [
     'Agent',
@@ -42,6 +42,4 @@ __all__ = [
     'ToolError',
     'ValidationError',
     'RuntimeError'
-]
-
-__version__ = '0.1.0' 
+] 

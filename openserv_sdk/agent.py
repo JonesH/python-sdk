@@ -299,13 +299,15 @@ class Agent:
             })
 
         try:
-            await self.runtime_client.execute_task(
+            # Execute the task
+            response = await self.runtime_client.execute_task(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
                 tools=[self._convert_tool_to_json_schema(t) for t in self.tools],
                 messages=messages,
                 action=action.model_dump()
             )
+
         except Exception as error:
             logger.error("Task execution failed: %s", str(error), exc_info=True)
             raise
@@ -326,12 +328,20 @@ class Agent:
                 })
 
         try:
-            # Fire and forget - don't wait for or process response
-            await self.runtime_client.handle_chat(
+            # Get the chat response
+            response = await self.runtime_client.handle_chat(
                 tools=[self._convert_tool_to_json_schema(t) for t in self.tools],
                 messages=messages,
                 action=action.model_dump()
             )
+
+            # Send the response
+            await self.send_chat_message(
+                workspace_id=action.workspace.id,
+                agent_id=action.me.id,
+                message=str(response)
+            )
+
         except Exception as error:
             logger.error("Chat response failed: %s", str(error), exc_info=True)
             # Don't re-raise the error to match TypeScript behavior
