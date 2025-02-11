@@ -33,7 +33,8 @@ class BaseClient:
             headers={
                 'Content-Type': 'application/json',
                 'x-openserv-key': config.api_key
-            }
+            },
+            verify=False if config.platform_url.startswith('https://') else True
         )
     
     async def close(self):
@@ -103,84 +104,53 @@ class BaseClient:
             raise APIError(f"Invalid JSON response: {str(e)}")
 
 class OpenServClient(BaseClient):
-    """Client for the OpenServ Platform API."""
+    """Client for making requests to the OpenServ API."""
+    
     def __init__(self, config: APIConfig):
         super().__init__(config)
-        self.client.base_url = config.platform_url
-    
-    async def get_files(self, workspace_id: int) -> Dict[str, Any]:
-        """Get files from a workspace."""
-        return await self._request('GET', f'/workspaces/{workspace_id}/files')
-    
-    async def upload_file(
-        self,
-        workspace_id: int,
-        path: str,
-        file_content: Any,
-        task_ids: Optional[list[int]] = None,
-        skip_summarizer: Optional[bool] = None
-    ) -> Dict[str, Any]:
-        """Upload a file to a workspace."""
-        files = {'file': ('file', file_content)}
-        data = {
-            'path': path,
-            'taskIds': str(task_ids) if task_ids else None,
-            'skipSummarizer': str(skip_summarizer) if skip_summarizer is not None else None
-        }
-        return await self._request(
-            'POST',
-            f'/workspaces/{workspace_id}/file',
-            files=files,
-            json=data
-        )
+        
+    async def get(self, path: str) -> Dict[str, Any]:
+        """Make a GET request."""
+        url = f"{self.config.platform_url}{path}"
+        return await self._request('GET', url)
+        
+    async def post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Make a POST request."""
+        url = f"{self.config.platform_url}{path}"
+        return await self._request('POST', url, json_data=data)
+        
+    async def put(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Make a PUT request."""
+        url = f"{self.config.platform_url}{path}"
+        return await self._request('PUT', url, json_data=data)
+        
+    async def delete(self, path: str) -> Dict[str, Any]:
+        """Make a DELETE request."""
+        url = f"{self.config.platform_url}{path}"
+        return await self._request('DELETE', url)
 
 class RuntimeClient(BaseClient):
-    """Client for the OpenServ Runtime API."""
+    """Client for making requests to the OpenServ Runtime API."""
+    
     def __init__(self, config: APIConfig):
         super().__init__(config)
-        self.client = httpx.AsyncClient(
-            base_url=f"{config.runtime_url}/runtime",
-            headers={
-                'Content-Type': 'application/json',
-                'x-openserv-key': config.api_key
-            },
-            timeout=300.0
-        )
-    
-    async def execute_task(
-        self,
-        workspace_id: int,
-        task_id: int,
-        tools: list[Dict[str, Any]],
-        messages: list[Dict[str, Any]],
-        action: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Execute a task through the runtime."""
-        return await self._request(
-            'POST',
-            '/execute',
-            json_data={
-                'workspace_id': workspace_id,
-                'task_id': task_id,
-                'tools': tools,
-                'messages': messages,
-                'action': action
-            }
-        )
-    
-    async def handle_chat(
-        self,
-        tools: List[Dict[str, Any]],
-        messages: List[Dict[str, str]],
-        action: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Handle a chat request."""
-        return await self._request(
-            "POST",
-            "/chat",
-            json_data={
-                "tools": tools,
-                "messages": messages,
-                "action": action,
-            },
-        ) 
+        
+    async def execute_task(self, workspace_id: int, task_id: int, tools: list, messages: list, action: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a task."""
+        url = f"{self.config.runtime_url}/runtime/execute"
+        return await self._request('POST', url, json_data={
+            'workspaceId': workspace_id,
+            'taskId': task_id,
+            'tools': tools,
+            'messages': messages,
+            'action': action
+        })
+        
+    async def handle_chat(self, tools: list, messages: list, action: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle a chat message."""
+        url = f"{self.config.runtime_url}/runtime/chat"
+        return await self._request('POST', url, json_data={
+            'tools': tools,
+            'messages': messages,
+            'action': action
+        }) 

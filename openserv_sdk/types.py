@@ -27,7 +27,7 @@ class AgentBase(BaseModel):
 class Agent(BaseModel):
     id: int
     name: str
-    kind: Optional[AgentKind] = None
+    kind: str = "openserv"
     capabilities_description: Optional[str] = None
 
 class TaskAttachment(BaseModel):
@@ -79,7 +79,7 @@ class Integration(BaseModel):
 class Memory(BaseModel):
     id: int
     memory: str
-    createdAt: datetime = Field(default_factory=datetime.now)
+    createdAt: datetime
 
 class AgentAction(BaseModel):
     type: Literal['do-task', 'respond-chat-message']
@@ -99,26 +99,30 @@ class ChatMessage(BaseModel):
     id: int
     createdAt: datetime
 
-class RespondChatMessageAction(AgentAction):
-    type: Literal['respond-chat-message']
+class RespondChatMessageAction(BaseModel):
+    type: str = "respond-chat-message"
+    me: Agent
     messages: List[ChatMessage]
+    workspace: Workspace
+    integrations: List[Dict[str, Any]] = []
+    memories: List[Memory] = []
 
 class ProcessParams(BaseModel):
     messages: List[Dict[str, str]]
 
 class AgentOptions(BaseModel):
-    """Options for configuring an agent."""
+    """Configuration options for creating a new Agent instance."""
     system_prompt: str
-    api_key: str
+    api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
-    port: Optional[int] = None
-    host: Optional[str] = None
-    log_level: Optional[str] = 'info'
+    model: Optional[str] = "gpt-4"
+    port: Optional[int] = 7378
+    host: Optional[str] = '0.0.0.0'
+    log_level: Optional[str] = 'debug'
     reload: Optional[bool] = False
-    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
     platform_url: Optional[str] = 'https://api.openserv.ai'
     runtime_url: Optional[str] = 'https://agents.openserv.ai'
-    model: Optional[str] = 'gpt-4'
+    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
 
 class GetFilesParams(BaseModel):
     workspace_id: int
