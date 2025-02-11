@@ -7,8 +7,8 @@ import openai
 import logging
 import traceback
 
-# Change to relative import
-from ..src import Agent, AgentOptions, Capability
+# Import from openserv_sdk package
+from openserv_sdk import Agent, AgentOptions, Capability
 
 load_dotenv()
 
