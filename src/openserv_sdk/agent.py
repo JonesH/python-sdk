@@ -6,6 +6,7 @@ import os
 import json
 import logging
 import traceback
+import asyncio
 from typing import Dict, Any, List, Optional, Union, TypeVar, Generic
 from pydantic import BaseModel
 from openai import AsyncOpenAI
