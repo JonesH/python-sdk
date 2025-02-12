@@ -5,11 +5,11 @@ Agent implementation for OpenServ.
 import os
 import json
 import logging
-import traceback
 import asyncio
 from typing import Dict, Any, List, Optional, Union, TypeVar, Generic
 from pydantic import BaseModel
 from openai import AsyncOpenAI
+import aiohttp
 
 from openserv_sdk.config import Config, APIConfig, OpenAIConfig, ServerConfig
 from openserv_sdk.client import OpenServClient, RuntimeClient
@@ -17,12 +17,13 @@ from openserv_sdk.server import AgentServer
 from openserv_sdk.capability import Capability
 from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
 from openserv_sdk.types import (
-    AgentOptions, ProcessParams, RespondChatMessageAction, AgentKind,
-    TaskStatus, Workspace, AgentBase, Task, DoTaskAction, IntegrationCallRequest,
-    GetTasksParams, GetTaskDetailParams, GetAgentsParams, GetFilesParams,
-    UploadFileParams, MarkTaskAsErroredParams, CompleteTaskParams,
-    SendChatMessageParams, CreateTaskParams, AddLogToTaskParams,
-    RequestHumanAssistanceParams, UpdateTaskStatusParams
+    AgentOptions, ProcessParams, RespondChatMessageAction,
+    DoTaskAction, IntegrationCallRequest,
+    GetTasksParams, GetTaskDetailParams, GetAgentsParams,
+    UploadFileParams,
+    CreateTaskParams, AddLogToTaskParams,
+    RequestHumanAssistanceParams, UpdateTaskStatusParams,
+    SendChatMessageParams
 )
 
 logger = logging.getLogger(__name__)
@@ -167,29 +168,12 @@ class Agent:
             self.add_capability(capability)
         return self
 
-    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> str:
-        """Handle a tool route request."""
-        try:
-            logger.info(f"Handling tool route: {tool_name}")
-            logger.debug(f"Request body: {body}")
-
-            tool = next((t for t in self._tools if t.name == tool_name), None)
-            if not tool:
-                raise ToolError(tool_name=tool_name, message="Tool not found")
-
-            # Extract args and messages from the request body
-            args = body.get("args", {})
-            messages = body.get("messages", [])
-
-            # Run the tool
-            result = await tool.run({"args": args}, messages)
-            return str(result)
-
-        except Exception as error:
-            logger.error("Error: %s", str(error), exc_info=True)
-            if self.config.on_error:
-                self.config.on_error(error, {"context": "handle_tool_route"})
-            raise
+    def handle_error(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
+        """Default error handler that logs the error or calls the custom handler if provided."""
+        if self.config.on_error:
+            self.config.on_error(error, context)
+        else:
+            logger.error(f"Error in agent operation: {str(error)}", extra={"error": error, **context} if context else {"error": error})
 
     async def process(self, params: ProcessParams) -> Dict[str, Any]:
         """Process a request with the agent."""
@@ -200,49 +184,110 @@ class Agent:
             if not self._openai_client:
                 self._openai_client = AsyncOpenAI(api_key=self._openai_api_key)
 
-            completion = await self._openai_client.chat.completions.create(
-                messages=[{"role": "user", "content": msg["content"]} for msg in params.messages],
-                model="gpt-4",
-                tools=None
-            )
+            current_messages = [{"role": "user", "content": msg["content"]} for msg in params.messages]
+            completion = None
+            iteration_count = 0
+            MAX_ITERATIONS = 10
 
-            if not completion.choices or not completion.choices[0].message.content:
-                raise RuntimeError("No response from OpenAI")
+            while iteration_count < MAX_ITERATIONS:
+                completion = await self._openai_client.chat.completions.create(
+                    messages=current_messages,
+                    model="gpt-4",
+                    tools=self.openai_tools if self._tools else None
+                )
 
-            return {"result": completion.choices[0].message.content}
+                if not completion.choices:
+                    raise RuntimeError("No response from OpenAI")
+
+                last_message = completion.choices[0].message
+                if not last_message.tool_calls:
+                    return {"result": last_message.content}
+
+                # Process tool calls
+                tool_results = await asyncio.gather(*[
+                    self._handle_tool_call(tool_call, current_messages)
+                    for tool_call in last_message.tool_calls
+                ])
+
+                # Add results to messages
+                current_messages.extend([
+                    {"role": "assistant", "content": last_message.content},
+                    *[{"role": "tool", "content": result} for result in tool_results]
+                ])
+                iteration_count += 1
+
+            raise RuntimeError("Max iterations reached without completion")
         except Exception as e:
-            logger.error("Error: %s", str(e), exc_info=True)
-            if self.config.on_error:
-                self.config.on_error(e, {"context": "process"})
+            self.handle_error(e, {"context": "process"})
             raise
 
-    def handle_error(self, error: Exception, context: Dict[str, Any] = None) -> None:
-        """Handle errors by logging and calling the error handler if provided."""
-        logger.error(f"Error: {str(error)}", exc_info=True)
-        if self.config.on_error:
-            try:
-                self.config.on_error(error, context)
-            except Exception as e:
-                logger.error(f"Error handler failed: {str(e)}", exc_info=True)
+    async def _handle_tool_call(self, tool_call: Any, messages: List[Dict[str, str]]) -> str:
+        """Handle a single tool call from OpenAI."""
+        try:
+            if not tool_call.function:
+                raise RuntimeError("Tool call function is missing")
+
+            name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments)
+
+            tool = next((t for t in self._tools if t.name == name), None)
+            if not tool:
+                raise ToolError(tool_name=name, message=f"Tool '{name}' not found")
+
+            result = await tool.run({"args": args}, messages)
+            return str(result)
+        except Exception as e:
+            error_message = str(e)
+            self.handle_error(e, {
+                "tool_call": tool_call,
+                "context": "tool_execution"
+            })
+            return json.dumps({"error": error_message})
+
+    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> str:
+        """Handle a tool route request."""
+        try:
+            logger.info(f"Handling tool route: {tool_name}")
+            logger.debug(f"Request body: {body}")
+
+            tool = next((t for t in self._tools if t.name == tool_name), None)
+            if not tool:
+                raise ToolError(tool_name=tool_name, message="Tool not found")
+
+            args = body.get("args", {})
+            messages = body.get("messages", [])
+            action = body.get("action")
+
+            # Validate args against schema
+            validated_args = tool.schema.model_validate(args)
+            
+            result = await tool.run({"args": validated_args.model_dump(), "action": action}, messages)
+            return str(result)
+        except Exception as error:
+            self.handle_error(error, {
+                "request": {"tool_name": tool_name, "body": body},
+                "context": "handle_tool_route"
+            })
+            raise
 
     async def handle_root_route(self, body: Dict[str, Any]) -> None:
         """Handle the root route for task execution and chat message responses."""
-        logger.info("Handling root route request with body type: %s", body.get('type'))
         try:
             if body.get('type') == 'do-task':
-                logger.info("Processing do-task action")
                 action = DoTaskAction.model_validate(body)
                 # Fire and forget - don't await
                 asyncio.create_task(self.do_task(action))
             elif body.get('type') == 'respond-chat-message':
-                logger.info("Processing respond-chat-message action")
                 action = RespondChatMessageAction.model_validate(body)
                 # Fire and forget - don't await
                 asyncio.create_task(self.respond_to_chat(action))
             else:
                 raise ValueError('Invalid action type')
         except Exception as error:
-            logger.error("Root route handler failed: %s", str(error), exc_info=True)
+            self.handle_error(error, {
+                "request": body,
+                "context": "handle_root_route"
+            })
             raise
 
     async def start(self) -> None:
@@ -332,17 +377,27 @@ class Agent:
 
     async def get_files(self, workspace_id: int) -> Dict[str, Any]:
         """Get files in a workspace."""
-        response = await self._api_client.get(f"/workspaces/{workspace_id}/files")
+        response = await self._api_client.get(f"/workspaces/{workspace_id}/file")
         return response["data"]
 
-    async def upload_file(self, workspace_id: int, path: str, file: Union[str, bytes], task_ids: Optional[List[int]] = None, skip_summarizer: bool = False) -> Dict[str, Any]:
+    async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
         """Upload a file to a workspace."""
-        response = await self._api_client.post(f"/workspaces/{workspace_id}/files", {
-            "path": path,
-            "file": file,
-            "taskIds": task_ids,
-            "skipSummarizer": skip_summarizer
-        })
+        data = aiohttp.FormData()
+        data.add_field('path', params.path)
+        if params.task_ids is not None:
+            data.add_field('taskIds', json.dumps(params.task_ids))
+        if params.skip_summarizer is not None:
+            data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
+        
+        # Convert file content to bytes if it's a string
+        file_content = params.file if isinstance(params.file, bytes) else params.file.encode()
+        data.add_field('file', file_content)
+
+        response = await self._api_client.post(
+            f"/workspaces/{params.workspace_id}/file",
+            data=data,
+            headers={'Content-Type': 'multipart/form-data'}
+        )
         return response["data"]
 
     async def get_tasks(self, workspace_id: Union[int, GetTasksParams]) -> Dict[str, Any]:
@@ -371,9 +426,15 @@ class Agent:
 
     async def send_chat_message(self, workspace_id: int, agent_id: int, message: str) -> Dict[str, Any]:
         """Send a chat message."""
-        response = await self._api_client.post(f"/workspaces/{workspace_id}/agents/{agent_id}/chat", {
-            "message": message
-        })
+        params = SendChatMessageParams(
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            message=message
+        )
+        response = await self._api_client.post(
+            f"/workspaces/{params.workspace_id}/agents/{params.agent_id}/chat",
+            {"message": params.message}
+        )
         return response["data"]
 
     async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
@@ -423,12 +484,10 @@ class Agent:
         return response["data"]
 
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
-        """Updates the status of a task."""
-        response = await self._api_client.put(
+        """Update a task's status."""
+        response = await self._api_client.post(
             f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
-            {
-                "status": params.status
-            }
+            {"status": params.status}  # status is of type TaskStatus
         )
         return response["data"]
 

@@ -1,14 +1,16 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
-from pathlib import Path
-import asyncio
 from typing import Dict, Any
 
 from openserv_sdk.agent import Agent
 from openserv_sdk.capability import Capability
-from openserv_sdk.types import AgentOptions, ProcessParams, GetTasksParams, RequestHumanAssistanceParams, TaskStatus
-from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
+from openserv_sdk.types import (
+    AgentOptions, ProcessParams, GetTasksParams,
+    RequestHumanAssistanceParams, TaskStatus, UploadFileParams,
+    UpdateTaskStatusParams
+)
+from openserv_sdk.exceptions import RuntimeError, ToolError
 from pydantic import BaseModel
 
 class TestParams(BaseModel):
@@ -63,6 +65,13 @@ class TestAgent(Agent):
     @property
     def test_openai_tools(self):
         return self.openai_tools
+        
+    def get_test_config(self) -> Dict[str, Any]:
+        """Get test configuration."""
+        return {
+            "port": self.test_port,
+            "server": self.test_server
+        }
 
 def test_agent_initialization():
     """Test agent initialization with options."""
@@ -136,7 +145,10 @@ async def test_process_request(mock_openai):
     # Mock OpenAI response
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Test response"
+    mock_response.choices[0].message = MagicMock(
+        content="Test response",
+        tool_calls=None
+    )
     mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
 
     # Set the mocked client
@@ -146,7 +158,7 @@ async def test_process_request(mock_openai):
         {"role": "user", "content": "Hello"}
     ]))
 
-    assert result["result"] == "Test response"
+    assert result == {"result": "Test response"}
 
 @pytest.mark.asyncio
 async def test_empty_openai_response(mock_openai):
@@ -187,9 +199,11 @@ async def test_file_operations():
     assert files == {"files": []}
 
     upload_result = await agent.upload_file(
-        workspace_id=1,
-        path="test.txt",
-        file="test content"
+        params=UploadFileParams(
+            workspace_id=1,
+            path="test.txt",
+            file="test content"
+        )
     )
     assert upload_result == {"fileId": "test-file-id"}
 
@@ -221,7 +235,7 @@ async def test_task_operations():
     )
     assert complete == {"success": True}
 
-    tasks = await agent.get_tasks(1)
+    tasks = await agent.get_tasks(GetTasksParams(workspace_id=1))
     assert tasks == {"tasks": []}
 
 @pytest.mark.asyncio
@@ -236,7 +250,10 @@ async def test_chat_operations(mock_openai):
     # Mock OpenAI response
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Test response"
+    mock_response.choices[0].message = MagicMock(
+        content="Test response",
+        tool_calls=None
+    )
     mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
 
     # Set the mocked client
@@ -246,7 +263,7 @@ async def test_chat_operations(mock_openai):
         messages=[{"role": "user", "content": "Hello"}]
     ))
 
-    assert response["result"] == "Test response"
+    assert response == {"result": "Test response"}
 
 @pytest.mark.asyncio
 async def test_human_assistance():
@@ -324,3 +341,24 @@ async def test_openai_tools_conversion(mock_openai):
     assert len(openai_tools) == 1
     assert openai_tools[0]["type"] == "function"
     assert openai_tools[0]["function"]["name"] == "test_tool"
+
+@pytest.mark.asyncio
+async def test_update_task_status():
+    """Test updating task status."""
+    agent = Agent(AgentOptions(
+        system_prompt="Test",
+        api_key="test-key"
+    ))
+    
+    # Mock API client
+    agent.api_client = AsyncMock()
+    agent.api_client.post.return_value = {"data": {"success": True}}
+    
+    params = UpdateTaskStatusParams(
+        workspace_id=1,
+        task_id=1,
+        status=TaskStatus.IN_PROGRESS
+    )
+    
+    result = await agent.update_task_status(params)
+    assert result == {"success": True}
