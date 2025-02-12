@@ -7,7 +7,7 @@ from typing import Dict, Any
 
 from openserv_sdk.agent import Agent
 from openserv_sdk.capability import Capability
-from openserv_sdk.types import AgentOptions, ProcessParams, GetTasksParams, RequestHumanAssistanceParams, TaskStatus
+from openserv_sdk.types import AgentOptions, ProcessParams, GetTasksParams, RequestHumanAssistanceParams, TaskStatus, UploadFileParams
 from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
 from pydantic import BaseModel
 
@@ -136,7 +136,10 @@ async def test_process_request(mock_openai):
     # Mock OpenAI response
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Test response"
+    mock_response.choices[0].message = MagicMock(
+        content="Test response",
+        tool_calls=None
+    )
     mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
 
     # Set the mocked client
@@ -146,7 +149,7 @@ async def test_process_request(mock_openai):
         {"role": "user", "content": "Hello"}
     ]))
 
-    assert result["result"] == "Test response"
+    assert result == {"result": "Test response"}
 
 @pytest.mark.asyncio
 async def test_empty_openai_response(mock_openai):
@@ -187,9 +190,11 @@ async def test_file_operations():
     assert files == {"files": []}
 
     upload_result = await agent.upload_file(
-        workspace_id=1,
-        path="test.txt",
-        file="test content"
+        params=UploadFileParams(
+            workspace_id=1,
+            path="test.txt",
+            file="test content"
+        )
     )
     assert upload_result == {"fileId": "test-file-id"}
 
@@ -236,7 +241,10 @@ async def test_chat_operations(mock_openai):
     # Mock OpenAI response
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Test response"
+    mock_response.choices[0].message = MagicMock(
+        content="Test response",
+        tool_calls=None
+    )
     mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
 
     # Set the mocked client
@@ -246,7 +254,7 @@ async def test_chat_operations(mock_openai):
         messages=[{"role": "user", "content": "Hello"}]
     ))
 
-    assert response["result"] == "Test response"
+    assert response == {"result": "Test response"}
 
 @pytest.mark.asyncio
 async def test_human_assistance():
