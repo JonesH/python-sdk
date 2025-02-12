@@ -23,7 +23,7 @@ from openserv_sdk.types import (
     UploadFileParams,
     CreateTaskParams, AddLogToTaskParams,
     RequestHumanAssistanceParams, UpdateTaskStatusParams,
-    SendChatMessageParams
+    SendChatMessageParams, TaskStatus
 )
 
 logger = logging.getLogger(__name__)
@@ -275,12 +275,14 @@ class Agent:
         try:
             if body.get('type') == 'do-task':
                 action = DoTaskAction.model_validate(body)
-                # Fire and forget - don't await
-                asyncio.create_task(self.do_task(action))
+                # Create task but store its future
+                task = asyncio.create_task(self.do_task(action))
+                # Add error handler
+                task.add_done_callback(self._handle_task_completion)
             elif body.get('type') == 'respond-chat-message':
                 action = RespondChatMessageAction.model_validate(body)
-                # Fire and forget - don't await
-                asyncio.create_task(self.respond_to_chat(action))
+                chat_task = asyncio.create_task(self.respond_to_chat(action))
+                chat_task.add_done_callback(self._handle_chat_completion)
             else:
                 raise ValueError('Invalid action type')
         except Exception as error:
@@ -289,6 +291,22 @@ class Agent:
                 "context": "handle_root_route"
             })
             raise
+
+    def _handle_task_completion(self, future: asyncio.Future) -> None:
+        """Handle task completion and any errors."""
+        try:
+            future.result()  # This will raise any exceptions that occurred
+        except Exception as error:
+            logger.error("Task failed: %s", str(error), exc_info=True)
+            self.handle_error(error, {"context": "task_completion"})
+
+    def _handle_chat_completion(self, future: asyncio.Future) -> None:
+        """Handle chat completion and any errors."""
+        try:
+            future.result()
+        except Exception as error:
+            logger.error("Chat failed: %s", str(error), exc_info=True)
+            self.handle_error(error, {"context": "chat_completion"})
 
     async def start(self) -> None:
         """Start the agent server."""
@@ -319,6 +337,13 @@ class Agent:
             })
 
         try:
+            # Update status to in-progress
+            await self.update_task_status(UpdateTaskStatusParams(
+                workspace_id=action.workspace.id,
+                task_id=action.task.id,
+                status=TaskStatus.IN_PROGRESS
+            ))
+
             # Execute the task
             response = await self._runtime_client.execute_task(
                 workspace_id=action.workspace.id,
@@ -328,8 +353,30 @@ class Agent:
                 action=action.model_dump()
             )
 
+            # Handle the response
+            if response and "error" in response:
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(response["error"])
+                )
+            else:
+                # Update status to done
+                await self.update_task_status(UpdateTaskStatusParams(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    status=TaskStatus.DONE
+                ))
+
         except Exception as error:
             logger.error("Task execution failed: %s", str(error), exc_info=True)
+            # Mark task as errored
+            await self.mark_task_as_errored(
+                workspace_id=action.workspace.id,
+                task_id=action.task.id,
+                error=str(error)
+            )
+            self.handle_error(error, {"context": "task_execution"})
             raise
 
     async def respond_to_chat(self, action: RespondChatMessageAction) -> None:
