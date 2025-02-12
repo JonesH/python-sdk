@@ -1,14 +1,16 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
-from pathlib import Path
-import asyncio
-from typing import Dict, Any
+from typing import Dict
 
 from openserv_sdk.agent import Agent
 from openserv_sdk.capability import Capability
-from openserv_sdk.types import AgentOptions, ProcessParams, GetTasksParams, RequestHumanAssistanceParams, TaskStatus, UploadFileParams
-from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
+from openserv_sdk.types import (
+    AgentOptions, ProcessParams, GetTasksParams,
+    RequestHumanAssistanceParams, TaskStatus, UploadFileParams,
+    UpdateTaskStatusParams
+)
+from openserv_sdk.exceptions import RuntimeError, ToolError
 from pydantic import BaseModel
 
 class TestParams(BaseModel):
@@ -332,3 +334,24 @@ async def test_openai_tools_conversion(mock_openai):
     assert len(openai_tools) == 1
     assert openai_tools[0]["type"] == "function"
     assert openai_tools[0]["function"]["name"] == "test_tool"
+
+@pytest.mark.asyncio
+async def test_update_task_status():
+    """Test updating task status."""
+    agent = Agent(AgentOptions(
+        system_prompt="Test",
+        api_key="test-key"
+    ))
+    
+    # Mock API client
+    agent.api_client = AsyncMock()
+    agent.api_client.post.return_value = {"data": {"success": True}}
+    
+    params = UpdateTaskStatusParams(
+        workspace_id=1,
+        task_id=1,
+        status=TaskStatus.IN_PROGRESS
+    )
+    
+    result = await agent.update_task_status(params)
+    assert result == {"success": True}
