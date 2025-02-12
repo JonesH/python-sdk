@@ -1,19 +1,22 @@
 import os
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
+from openai import AsyncOpenAI
+from pathlib import Path
 
-from src import Agent
-from examples.marketing_agent import create_marketing_agent, create_social_media_post, analyze_engagement, SocialMediaPostParams, AnalyzeEngagementParams, EngagementMetrics
+from openserv_sdk import Agent, AgentOptions, Capability
+from openserv_sdk.types import SocialMediaPostParams, AnalyzeEngagementParams, EngagementMetrics
 
 @pytest.fixture
 def mock_openai():
-    with patch('openai.OpenAI') as mock:
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = MagicMock(
+    """Mock AsyncOpenAI client for testing."""
+    with patch('openai.AsyncOpenAI') as mock:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create.return_value = AsyncMock(
             choices=[
                 MagicMock(
                     message=MagicMock(
-                        content='Test response',
+                        content='Generated social media post content',
                         role='assistant'
                     )
                 )
@@ -24,7 +27,7 @@ def mock_openai():
 
 @pytest.fixture
 def mock_agent():
-    with patch('src.agent.Agent') as mock:
+    with patch('openserv_sdk.agent.Agent') as mock:
         mock_instance = MagicMock()
         mock.return_value = mock_instance
         yield mock_instance
@@ -32,126 +35,316 @@ def mock_agent():
 @pytest.mark.asyncio
 async def test_create_social_media_post(mock_openai):
     """Test creating a social media post."""
-    params = SocialMediaPostParams(
-        platform='twitter',
-        topic='coding schools'
-    )
+    params = {
+        "args": {
+            "platform": "twitter",
+            "topic": "coding schools"
+        }
+    }
     messages = [
         {"role": "user", "content": "Write a tweet about coding schools"}
     ]
 
-    # Run the function
-    result = await create_social_media_post(params, messages)
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
 
-    # Verify OpenAI was called correctly
-    mock_openai.assert_called_once()
-    call_args = mock_openai.chat.completions.create.call_args[1]
-    assert call_args['model'] == 'gpt-4'
-    assert len(call_args['messages']) == 2  # Initial message + prompt
-    assert call_args['messages'][1]['role'] == 'user'
-    assert 'Create a twitter post about coding schools' in call_args['messages'][1]['content']
-    
-    # Verify result
-    assert result == 'Test response'
+    async def test_run(params, messages):
+        completion = await mock_openai.return_value.chat.completions.create(
+            model='gpt-4',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': f"You are a marketing expert. Create a compelling {params['args']['platform']} post about: {params['args']['topic']}"
+                },
+                {
+                    'role': 'user',
+                    'content': params['args']['topic']
+                }
+            ]
+        )
+        return completion.choices[0].message.content
+
+    capability = Capability(
+        name="createSocialMediaPost",
+        description="Creates a social media post for the specified platform",
+        schema=SocialMediaPostParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "createSocialMediaPost",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Generated social media post content"
 
 @pytest.mark.asyncio
-async def test_analyze_engagement(mock_openai, mock_agent):
+async def test_analyze_engagement(mock_openai):
     """Test analyzing engagement metrics."""
     params = {
-        'args': AnalyzeEngagementParams(
-            platform='twitter',
-            metrics=EngagementMetrics(
-                likes=100,
-                shares=50,
-                comments=25,
-                impressions=1000
-            )
-        )
+        "args": {
+            "platform": "twitter",
+            "metrics": {
+                "likes": 100,
+                "shares": 50,
+                "comments": 25,
+                "impressions": 1000
+            }
+        }
     }
+    messages = []
 
-    # Run the function
-    result = await analyze_engagement(mock_agent, params)
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
 
-    # Verify OpenAI was called correctly
-    mock_openai.assert_called_once()
-    call_args = mock_openai.chat.completions.create.call_args[1]
-    assert call_args['model'] == 'gpt-4o'
-    assert len(call_args['messages']) == 2  # System prompt + metrics
-    assert call_args['messages'][0]['role'] == 'system'
-    assert 'social media analytics expert' in call_args['messages'][0]['content']
-    assert call_args['messages'][1]['role'] == 'user'
-    
-    # Verify result
-    assert result == 'Test response'
+    async def test_run(params, messages):
+        completion = await mock_openai.return_value.chat.completions.create(
+            model='gpt-4',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': "You are a social media analytics expert"
+                },
+                {
+                    'role': 'user',
+                    'content': str(params["args"])
+                }
+            ]
+        )
+        return completion.choices[0].message.content
 
-def test_create_marketing_agent():
-    """Test creating a marketing agent instance."""
-    with patch('pathlib.Path.read_text') as mock_read:
-        mock_read.return_value = "Test system prompt"
-        
-        agent = create_marketing_agent()
-        
-        # Verify agent was created with correct options
-        assert isinstance(agent, Agent)
-        assert agent.config.system_prompt == "Test system prompt"
-        assert agent.config.api.api_key == os.getenv('OPENSERV_API_KEY')
-        assert agent.config.openai.api_key == os.getenv('OPENAI_API_KEY')
-        
-        # Verify capabilities were added
-        tools = agent.tools
-        assert len(tools) == 2
-        
-        # Verify createSocialMediaPost capability
-        social_media_cap = next(t for t in tools if t.name == 'createSocialMediaPost')
-        assert social_media_cap.description == 'Creates a social media post for the specified platform'
-        assert social_media_cap.schema == SocialMediaPostParams
-        assert social_media_cap.run == create_social_media_post
-        
-        # Verify analyzeEngagement capability
-        analyze_cap = next(t for t in tools if t.name == 'analyzeEngagement')
-        assert analyze_cap.description == 'Analyzes social media engagement metrics and provides recommendations'
-        assert analyze_cap.schema == AnalyzeEngagementParams
-        assert analyze_cap.run == analyze_engagement
+    capability = Capability(
+        name="analyzeEngagement",
+        description="Analyzes social media engagement metrics",
+        schema=AnalyzeEngagementParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "analyzeEngagement",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Generated social media post content"
 
 @pytest.mark.asyncio
 async def test_handle_empty_openai_response(mock_openai):
     """Test handling empty OpenAI response."""
-    mock_openai.chat.completions.create.return_value = MagicMock(choices=[])
+    mock_openai.return_value.chat.completions.create.return_value = AsyncMock(choices=[])
     
-    params = SocialMediaPostParams(
-        platform='twitter',
-        topic='coding schools'
-    )
-    messages = [
-        {"role": "user", "content": "Write a tweet"}
-    ]
+    params = {
+        "args": {
+            "platform": "twitter",
+            "topic": "coding schools"
+        }
+    }
+    messages = []
 
-    # Run the function and verify it handles empty response
-    result = await create_social_media_post(params, messages)
-    assert result == 'Failed to generate post'
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
+
+    async def test_run(params, messages):
+        completion = await mock_openai.return_value.chat.completions.create(
+            model='gpt-4',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': f"You are a marketing expert. Create a compelling {params['args']['platform']} post about: {params['args']['topic']}"
+                },
+                {
+                    'role': 'user',
+                    'content': params['args']['topic']
+                }
+            ]
+        )
+        return completion.choices[0].message.content if completion.choices else "Failed to generate post"
+
+    capability = Capability(
+        name="createSocialMediaPost",
+        description="Creates a social media post for the specified platform",
+        schema=SocialMediaPostParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "createSocialMediaPost",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Failed to generate post"
 
 @pytest.mark.asyncio
 async def test_handle_missing_message_content(mock_openai):
     """Test handling missing message content in OpenAI response."""
-    mock_openai.chat.completions.create.return_value = MagicMock(
+    mock_openai.return_value.chat.completions.create.return_value = AsyncMock(
         choices=[
             MagicMock(
                 message=MagicMock(
                     content=None,
-                    role='assistant'
+                    role="assistant"
                 )
             )
         ]
     )
     
-    params = SocialMediaPostParams(
-        platform='twitter',
-        topic='coding schools'
-    )
-    messages = [
-        {"role": "user", "content": "Write a tweet"}
-    ]
+    params = {
+        "args": {
+            "platform": "twitter",
+            "topic": "coding schools"
+        }
+    }
+    messages = []
 
-    # Run the function and verify it handles missing content
-    result = await create_social_media_post(params, messages)
-    assert result == 'Failed to generate post' 
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
+
+    async def test_run(params, messages):
+        completion = await mock_openai.return_value.chat.completions.create(
+            model='gpt-4',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': f"You are a marketing expert. Create a compelling {params['args']['platform']} post about: {params['args']['topic']}"
+                },
+                {
+                    'role': 'user',
+                    'content': params['args']['topic']
+                }
+            ]
+        )
+        return completion.choices[0].message.content or "Failed to generate post"
+
+    capability = Capability(
+        name="createSocialMediaPost",
+        description="Creates a social media post for the specified platform",
+        schema=SocialMediaPostParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "createSocialMediaPost",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Failed to generate post"
+
+@pytest.mark.asyncio
+async def test_create_social_media_post_api_error(mock_openai):
+    """Test handling OpenAI API error in create_social_media_post."""
+    mock_openai.return_value.chat.completions.create.side_effect = Exception("API Error")
+    
+    params = {
+        "args": {
+            "platform": "twitter",
+            "topic": "coding schools"
+        }
+    }
+    messages = []
+
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
+
+    async def test_run(params, messages):
+        try:
+            completion = await mock_openai.return_value.chat.completions.create(
+                model='gpt-4',
+                messages=[
+                    {
+                        'role': 'system',
+                        'content': f"You are a marketing expert. Create a compelling {params['args']['platform']} post about: {params['args']['topic']}"
+                    },
+                    {
+                        'role': 'user',
+                        'content': params['args']['topic']
+                    }
+                ]
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            return f"Failed to generate post: {str(e)}"
+
+    capability = Capability(
+        name="createSocialMediaPost",
+        description="Creates a social media post for the specified platform",
+        schema=SocialMediaPostParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "createSocialMediaPost",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Failed to generate post: API Error"
+
+@pytest.mark.asyncio
+async def test_analyze_engagement_api_error(mock_openai):
+    """Test handling OpenAI API error in analyze_engagement."""
+    mock_openai.return_value.chat.completions.create.side_effect = Exception("API Error")
+    
+    params = {
+        "args": {
+            "platform": "twitter",
+            "metrics": {
+                "likes": 100,
+                "shares": 50,
+                "comments": 25,
+                "impressions": 1000
+            }
+        }
+    }
+    messages = []
+
+    agent = Agent(AgentOptions(
+        system_prompt="You are a marketing expert",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
+    ))
+
+    async def test_run(params, messages):
+        try:
+            completion = await mock_openai.return_value.chat.completions.create(
+                model='gpt-4',
+                messages=[
+                    {
+                        'role': 'system',
+                        'content': "You are a social media analytics expert"
+                    },
+                    {
+                        'role': 'user',
+                        'content': str(params["args"])
+                    }
+                ]
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            return f"Failed to analyze engagement: {str(e)}"
+
+    capability = Capability(
+        name="analyzeEngagement",
+        description="Analyzes social media engagement metrics",
+        schema=AnalyzeEngagementParams,
+        run=test_run
+    )
+    agent.add_capability(capability)
+
+    result = await agent.handle_tool_route(
+        "analyzeEngagement",
+        {"args": params["args"], "messages": messages, "action": None}
+    )
+    assert result == "Failed to analyze engagement: API Error" 

@@ -1,8 +1,6 @@
 import pytest
 from pydantic import BaseModel
-from src.agent import Agent
-from src.capability import Capability
-from src.types import AgentOptions
+from openserv_sdk import Agent, AgentOptions, Capability
 
 @pytest.fixture
 def mock_api_key():
@@ -19,28 +17,30 @@ async def test_execute_capability(mock_api_key):
     ))
 
     async def test_run(params, messages):
-        return params["args"].input
+        return params["args"]["input"]
 
-    agent.add_capability(Capability(
+    capability = Capability(
         name="testCapability",
         description="A test capability",
         schema=TestInput,
         run=test_run
-    ))
+    )
 
-    result = await agent.handle_tool_route({
-        "params": {"toolName": "testCapability"},
-        "body": {"args": {"input": "test"}}
-    })
+    agent.add_capability(capability)
 
-    assert result == {"result": "test"}
+    result = await agent.handle_tool_route(
+        "testCapability",
+        {"args": {"input": "test"}, "messages": [], "action": None}
+    )
+
+    assert result == "test"
 
 def test_validate_capability_schema(mock_api_key):
     class TestNumberInput(BaseModel):
         input: int
 
     async def test_run(params, messages):
-        return str(params["args"].input)
+        return str(params["args"]["input"])
 
     capability = Capability(
         name="testCapability",
@@ -50,7 +50,7 @@ def test_validate_capability_schema(mock_api_key):
     )
 
     with pytest.raises(ValueError):
-        capability.schema(input="not a number")
+        capability.schema.model_validate({"input": "not a number"})
 
 @pytest.mark.asyncio
 async def test_handle_multiple_capabilities(mock_api_key):
@@ -60,7 +60,7 @@ async def test_handle_multiple_capabilities(mock_api_key):
     ))
 
     async def test_run(params, messages):
-        return params["args"].input
+        return params["args"]["input"]
 
     capabilities = [
         Capability(
@@ -77,21 +77,20 @@ async def test_handle_multiple_capabilities(mock_api_key):
         )
     ]
 
-    for capability in capabilities:
-        agent.add_capability(capability)
+    agent.add_capabilities(capabilities)
 
     # Test both tools
-    result1 = await agent.handle_tool_route({
-        "params": {"toolName": "tool1"},
-        "body": {"args": {"input": "test1"}}
-    })
-    assert result1 == {"result": "test1"}
+    result1 = await agent.handle_tool_route(
+        "tool1",
+        {"args": {"input": "test1"}, "messages": [], "action": None}
+    )
+    assert result1 == "test1"
 
-    result2 = await agent.handle_tool_route({
-        "params": {"toolName": "tool2"},
-        "body": {"args": {"input": "test2"}}
-    })
-    assert result2 == {"result": "test2"}
+    result2 = await agent.handle_tool_route(
+        "tool2",
+        {"args": {"input": "test2"}, "messages": [], "action": None}
+    )
+    assert result2 == "test2"
 
 def test_duplicate_capability(mock_api_key):
     agent = Agent(AgentOptions(
@@ -100,24 +99,18 @@ def test_duplicate_capability(mock_api_key):
     ))
 
     async def test_run(params, messages):
-        return params["args"].input
+        return params["args"]["input"]
 
-    agent.add_capability(Capability(
-        name="test",
-        description="Tool 1",
+    capability = Capability(
+        name="test_tool",
+        description="Test tool",
         schema=TestInput,
         run=test_run
-    ))
+    )
 
-    with pytest.raises(ValueError) as exc_info:
-        agent.add_capability(Capability(
-            name="test",
-            description="Tool 1 duplicate",
-            schema=TestInput,
-            run=test_run
-        ))
-    
-    assert str(exc_info.value) == 'Tool with name "test" already exists'
+    agent.add_capability(capability)
+    with pytest.raises(ValueError, match='Capability with name "test_tool" already exists'):
+        agent.add_capability(capability)
 
 def test_duplicate_capabilities_in_list(mock_api_key):
     agent = Agent(AgentOptions(
@@ -126,25 +119,15 @@ def test_duplicate_capabilities_in_list(mock_api_key):
     ))
 
     async def test_run(params, messages):
-        return params["args"].input
+        return params["args"]["input"]
 
-    capabilities = [
-        Capability(
-            name="tool1",
-            description="Tool 1",
-            schema=TestInput,
-            run=test_run
-        ),
-        Capability(
-            name="tool1",
-            description="Tool 1 duplicate",
-            schema=TestInput,
-            run=test_run
-        )
-    ]
+    capability = Capability(
+        name="test_tool",
+        description="Test tool",
+        schema=TestInput,
+        run=test_run
+    )
 
-    with pytest.raises(ValueError) as exc_info:
-        for capability in capabilities:
-            agent.add_capability(capability)
-    
-    assert str(exc_info.value) == 'Tool with name "tool1" already exists' 
+    capabilities = [capability, capability]
+    with pytest.raises(ValueError, match="Duplicate capability names found"):
+        agent.add_capabilities(capabilities) 

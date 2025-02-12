@@ -3,7 +3,7 @@ Configuration management for the OpenServ Agent library.
 """
 
 import os
-from typing import Optional
+from typing import Optional, Callable, Dict, Any
 from pydantic import BaseModel, Field
 
 class APIConfig(BaseModel):
@@ -31,6 +31,7 @@ class Config(BaseModel):
     host: str = '0.0.0.0'
     log_level: str = 'debug'
     reload: bool = False
+    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
     
     def validate_api_key(self):
         """Validate that API key is present."""

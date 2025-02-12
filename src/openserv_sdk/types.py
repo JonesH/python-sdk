@@ -99,12 +99,12 @@ class ChatMessage(BaseModel):
     id: int
     createdAt: datetime
 
-class RespondChatMessageAction(BaseModel):
-    type: str = "respond-chat-message"
-    me: Agent
+class RespondChatMessageAction(AgentAction):
+    type: Literal['respond-chat-message']
+    me: AgentBase
     messages: List[ChatMessage]
     workspace: Workspace
-    integrations: List[Dict[str, Any]] = []
+    integrations: List[Integration] = []
     memories: List[Memory] = []
 
 class ProcessParams(BaseModel):
@@ -125,7 +125,7 @@ class AgentOptions(BaseModel):
     on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
 
 class GetFilesParams(BaseModel):
-    workspace_id: int
+    workspace_id: int = Field(gt=0, description="Workspace ID must be a positive integer")
 
 class UploadFileParams(BaseModel):
     workspace_id: int
