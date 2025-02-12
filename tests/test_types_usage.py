@@ -44,7 +44,7 @@ async def test_respond_chat_message_action():
         memories=[]
     )
     assert action.type == "respond-chat-message"
-    assert action.me["id"] == 1
+    assert action.me.id == 1
     assert len(action.messages) == 1
 
 @pytest.mark.asyncio
@@ -59,8 +59,8 @@ async def test_do_task_action():
         memories=[]
     )
     assert action.type == "do-task"
-    assert action.task["id"] == 1
-    assert action.workspace["id"] == 1
+    assert action.task.id == 1
+    assert action.workspace.id == 1
 
 @pytest.mark.asyncio
 async def test_get_tasks_params():
