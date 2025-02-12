@@ -25,6 +25,24 @@ A powerful Python framework for building non-deterministic AI agents with advanc
 
 ## Installation
 
+### Option 1: Install from GitHub
+```bash
+pip install git+https://github.com/openserv-labs/python-sdk.git
+```
+
+### Option 2: Local Installation
+```bash
+# Clone the repository
+git clone https://github.com/openserv-labs/python-sdk.git
+
+# Navigate to the project directory
+cd python-sdk
+
+# Install in editable mode
+pip install -e .
+```
+
+### Option 3: PyPI (Coming Soon)
 ```bash
 pip install openserv-sdk
 ```
