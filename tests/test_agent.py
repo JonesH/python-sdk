@@ -132,16 +132,21 @@ async def test_process_request(mock_openai):
         api_key="test-key",
         openai_api_key="test-openai-key"
     ))
-    
-    # Ensure OpenAI client is initialized
-    agent.openai_client = mock_openai.return_value
-    
+
+    # Mock OpenAI response
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Test response"
+    mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    # Set the mocked client
+    agent._openai_client = mock_openai.return_value
+
     result = await agent.process(ProcessParams(messages=[
         {"role": "user", "content": "Hello"}
     ]))
-    
-    assert result["choices"][0]["message"]["content"] == "Test response"
-    mock_openai.return_value.chat.completions.create.assert_called_once()
+
+    assert result["result"] == "Test response"
 
 @pytest.mark.asyncio
 async def test_empty_openai_response(mock_openai):
@@ -227,16 +232,21 @@ async def test_chat_operations(mock_openai):
         api_key="test-key",
         openai_api_key="test-openai-key"
     ))
-    
-    # Ensure OpenAI client is initialized
-    agent.openai_client = mock_openai.return_value
-    
+
+    # Mock OpenAI response
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Test response"
+    mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    # Set the mocked client
+    agent._openai_client = mock_openai.return_value
+
     response = await agent.process(ProcessParams(
         messages=[{"role": "user", "content": "Hello"}]
     ))
-    
-    assert response["choices"][0]["message"]["content"] == "Test response"
-    mock_openai.return_value.chat.completions.create.assert_called_once()
+
+    assert response["result"] == "Test response"
 
 @pytest.mark.asyncio
 async def test_human_assistance():

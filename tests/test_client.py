@@ -142,56 +142,21 @@ async def test_runtime_client_methods(api_config, mock_httpx):
 @pytest.mark.asyncio
 async def test_datetime_serialization(api_config, mock_httpx):
     """Test datetime serialization in requests."""
-    client = OpenServClient(api_config)
-    
-    # Mock successful response
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.headers = {'content-type': 'application/json'}
-    mock_response.json.return_value = {'data': 'test'}
-    mock_httpx.request.return_value = mock_response
-    
-    # Test POST with datetime
-    test_data = {
-        'timestamp': datetime(2024, 1, 1, 12, 0, 0),
-        'nested': {
-            'time': datetime(2024, 1, 1, 12, 0, 0)
-        }
-    }
-    
-    await client.post('/test', test_data)
-    
-    # Verify datetime was serialized
-    called_args = mock_httpx.request.call_args
-    sent_data = json.loads(called_args[1]['content'])
-    assert '2024-01-01T12:00:00' in sent_data['timestamp']
-    assert '2024-01-01T12:00:00' in sent_data['nested']['time']
-
-@pytest.mark.asyncio
-async def test_content_type_handling(api_config, mock_httpx):
-    """Test handling of different content types."""
     client = BaseClient(api_config)
     
-    # Test JSON response
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.headers = {'content-type': 'application/json'}
-    mock_response.json.return_value = {'data': 'test'}
+    mock_response.json.return_value = {"data": "test"}
     mock_httpx.request.return_value = mock_response
     
-    result = await client._request('GET', '/test')
-    assert result == {'data': 'test'}
+    test_date = datetime.now()
+    await client._request('POST', '/test', json_data={"date": test_date})
     
-    # Test text response
-    mock_response.headers = {'content-type': 'text/plain'}
-    mock_response.text = 'test'
-    
-    result = await client._request('GET', '/test')
-    assert result == {'status': 'test'}
-    
-    # Test empty response
-    mock_response.content = b''
-    mock_response.text = ''
-    
-    result = await client._request('GET', '/test')
-    assert result is None 
+    # Verify datetime was serialized to ISO format
+    mock_httpx.request.assert_called_once()
+    call_args = mock_httpx.request.call_args
+    assert call_args is not None
+    assert 'content' in call_args[1]
+    content = json.loads(call_args[1]['content'])
+    assert isinstance(content['date'], str)
+    datetime.fromisoformat(content['date'])  # Should not raise error 

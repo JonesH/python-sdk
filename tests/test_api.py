@@ -68,20 +68,16 @@ def test_required_api_methods(mock_api_key: str) -> None:
 @pytest.mark.asyncio
 async def test_process_without_openai_key(mock_api_key: str) -> None:
     """Test that process method raises error when OpenAI key is missing."""
-    # Create agent without OpenAI key
     agent = Agent(AgentOptions(
         api_key=mock_api_key,
         system_prompt="You are a test agent",
         openai_api_key=None  # No OpenAI key provided
     ))
 
-    # Test that the process method raises ConfigurationError
-    with pytest.raises(ConfigurationError) as exc_info:
+    with pytest.raises(ConfigurationError, match="OpenAI API key is required"):
         await agent.process(ProcessParams(
             messages=[{"role": "user", "content": "test message"}]
         ))
-    
-    assert "OpenAI API key is required" in str(exc_info.value)
 
 def test_start_method_available(mock_api_key: str) -> None:
     """Test that start method is available."""
@@ -143,9 +139,11 @@ async def test_process_method_error_handling(mock_api_key: str) -> None:
         on_error=error_handler
     ))
 
-    # Mock OpenAI to throw an error
+    # Create a mock OpenAI client
+    mock_client = AsyncMock()
     test_error = Exception("OpenAI error")
-    agent.openai_client.chat.completions.create = AsyncMock(side_effect=test_error)
+    mock_client.chat.completions.create = AsyncMock(side_effect=test_error)
+    agent._openai_client = mock_client
 
     with pytest.raises(Exception) as exc_info:
         await agent.process(ProcessParams(
@@ -230,12 +228,7 @@ async def test_respond_to_chat_error_handling(mock_api_key: str) -> None:
 
     action = RespondChatMessageAction(
         type="respond-chat-message",
-        me=AgentType(
-            id=1,
-            name="test-agent",
-            kind=AgentKind.EXTERNAL,
-            capabilities_description="test capabilities"
-        ),
+        me={"id": 1, "name": "test-agent", "kind": AgentKind.EXTERNAL, "capabilities_description": "test capabilities"},
         messages=[],
         workspace=Workspace(
             id=1,
