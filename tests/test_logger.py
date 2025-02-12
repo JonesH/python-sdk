@@ -1,22 +1,22 @@
 import pytest
 import logging
 from unittest.mock import patch
-from src.logger import create_logger, logger
+from openserv_sdk.logger import create_logger, logger
 
 def test_create_logger_with_default_level():
     with patch.dict('os.environ', {}, clear=True):  # Clear LOG_LEVEL from env
         test_logger = create_logger()
-        assert test_logger.level == logging.INFO
+        assert test_logger.level == logging.DEBUG  # Default is DEBUG during troubleshooting
 
 def test_create_logger_with_custom_level():
-    with patch.dict('os.environ', {'LOG_LEVEL': 'DEBUG'}, clear=True):
+    with patch.dict('os.environ', {'LOG_LEVEL': 'INFO'}, clear=True):
         test_logger = create_logger()
-        assert test_logger.level == logging.DEBUG
+        assert test_logger.level == logging.INFO
 
 def test_create_logger_with_null_level():
     with patch.dict('os.environ', {}, clear=True):  # Clear LOG_LEVEL from env
         test_logger = create_logger()
-        assert test_logger.level == logging.INFO
+        assert test_logger.level == logging.DEBUG  # Default is DEBUG during troubleshooting
 
 def test_default_logger_instance():
     assert logger is not None

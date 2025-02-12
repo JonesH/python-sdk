@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union, Literal
+from typing import Optional, List, Dict, Any, Union, Literal, Callable
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -27,7 +27,7 @@ class AgentBase(BaseModel):
 class Agent(BaseModel):
     id: int
     name: str
-    kind: Optional[AgentKind] = None
+    kind: str = "openserv"
     capabilities_description: Optional[str] = None
 
 class TaskAttachment(BaseModel):
@@ -79,7 +79,7 @@ class Integration(BaseModel):
 class Memory(BaseModel):
     id: int
     memory: str
-    createdAt: datetime = Field(default_factory=datetime.now)
+    createdAt: datetime
 
 class AgentAction(BaseModel):
     type: Literal['do-task', 'respond-chat-message']
@@ -101,19 +101,31 @@ class ChatMessage(BaseModel):
 
 class RespondChatMessageAction(AgentAction):
     type: Literal['respond-chat-message']
+    me: AgentBase
     messages: List[ChatMessage]
+    workspace: Workspace
+    integrations: List[Integration] = []
+    memories: List[Memory] = []
 
 class ProcessParams(BaseModel):
     messages: List[Dict[str, str]]
 
 class AgentOptions(BaseModel):
+    """Configuration options for creating a new Agent instance."""
     system_prompt: str
     api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
-    port: Optional[int] = None
+    model: Optional[str] = "gpt-4"
+    port: Optional[int] = 7378
+    host: Optional[str] = '0.0.0.0'
+    log_level: Optional[str] = 'debug'
+    reload: Optional[bool] = False
+    platform_url: Optional[str] = 'https://api.openserv.ai'
+    runtime_url: Optional[str] = 'https://agents.openserv.ai'
+    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
 
 class GetFilesParams(BaseModel):
-    workspace_id: int
+    workspace_id: int = Field(gt=0, description="Workspace ID must be a positive integer")
 
 class UploadFileParams(BaseModel):
     workspace_id: int
@@ -193,3 +205,20 @@ class IntegrationCallRequest(BaseModel):
     workspace_id: int
     integration_id: str
     details: ProxyConfiguration 
+
+class EngagementMetrics(BaseModel):
+    """Social media engagement metrics."""
+    likes: int = Field(ge=0)
+    shares: int = Field(ge=0)
+    comments: int = Field(ge=0)
+    impressions: int = Field(ge=0)
+
+class SocialMediaPostParams(BaseModel):
+    """Parameters for creating a social media post."""
+    platform: str
+    topic: str
+
+class AnalyzeEngagementParams(BaseModel):
+    """Parameters for analyzing engagement metrics."""
+    platform: str
+    metrics: EngagementMetrics 

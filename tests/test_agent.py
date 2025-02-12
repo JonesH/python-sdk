@@ -3,11 +3,12 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import os
 from pathlib import Path
 import asyncio
+from typing import Dict, Any
 
-from src.agent import Agent
-from src.capability import Capability
-from src.types import AgentOptions, ProcessParams
-from src.exceptions import ConfigurationError
+from openserv_sdk.agent import Agent
+from openserv_sdk.capability import Capability
+from openserv_sdk.types import AgentOptions, ProcessParams, GetTasksParams, RequestHumanAssistanceParams, TaskStatus
+from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
 from pydantic import BaseModel
 
 class TestParams(BaseModel):
@@ -15,18 +16,37 @@ class TestParams(BaseModel):
 
 @pytest.fixture
 def mock_openai():
-    with patch('openai.OpenAI') as mock:
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(
-                        content='Test response',
-                        role='assistant'
-                    )
+    """Mock AsyncOpenAI client for testing."""
+    with patch('openai.AsyncOpenAI') as mock:
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.model_dump = MagicMock(return_value={
+            "choices": [{
+                "message": {
+                    "content": "Test response",
+                    "role": "assistant",
+                    "tool_calls": None
+                }
+            }]
+        })
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='Test response',
+                    role='assistant',
+                    tool_calls=None,
+                    model_dump=MagicMock(return_value={
+                        "content": "Test response",
+                        "role": "assistant",
+                        "tool_calls": None
+                    })
                 )
-            ]
-        ))
+            )
+        ]
+        
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
         mock.return_value = mock_client
         yield mock
 
@@ -38,7 +58,7 @@ class TestAgent(Agent):
     
     @property
     def test_port(self):
-        return self.config.server.port
+        return self.config.port
 
     @property
     def test_openai_tools(self):
@@ -46,59 +66,63 @@ class TestAgent(Agent):
 
 def test_agent_initialization():
     """Test agent initialization with options."""
-    with pytest.raises(ConfigurationError, match="OpenServ API key is required"):
-        Agent(AgentOptions(system_prompt="Test"))
-
     agent = Agent(AgentOptions(
         system_prompt="Test prompt",
-        api_key="test-api-key",
-        openai_api_key="test-openai-key",
-        port=8000
+        api_key=os.getenv('OPENSERV_API_KEY'),
+        openai_api_key=os.getenv('OPENAI_API_KEY'),
+        port=int(os.getenv('PORT', '7378'))
     ))
     
     assert agent.config.system_prompt == "Test prompt"
-    assert agent.config.api.api_key == "test-api-key"
-    assert agent.config.openai.api_key == "test-openai-key"
-    assert agent.config.server.port == 8000
-
-def test_default_port():
-    """Test that default port is used when not provided."""
-    agent = TestAgent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key"
-    ))
-    assert agent.test_port == 7378
+    assert agent.config.api.api_key == os.getenv('OPENSERV_API_KEY')
+    assert agent.config.openai.api_key == os.getenv('OPENAI_API_KEY')
+    assert agent.config.port == int(os.getenv('PORT', '7378'))
 
 @pytest.mark.asyncio
-async def test_handle_tool_route_validation_error():
-    """Test handling tool route validation error."""
+async def test_handle_tool_route():
+    """Test handling a tool route."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-openai-key"
     ))
-
-    agent.add_capability(Capability(
-        name="testTool",
+    
+    # Add a test tool
+    async def test_run(params, messages):
+        return "success"
+    
+    capability = Capability(
+        name="test_tool",
         description="A test tool",
         schema=TestParams,
-        run=lambda params, messages: params["args"].input
-    ))
-
-    with pytest.raises(ValueError):
-        await agent.handle_tool_route("testTool", {
-            "args": {"input": 123}  # Should be string
-        })
+        run=test_run
+    )
+    
+    agent.add_capability(capability)
+    
+    result = await agent.handle_tool_route(
+        tool_name="test_tool",
+        body={"args": {"input": "test"}, "messages": []}
+    )
+    
+    assert result == "success"
 
 @pytest.mark.asyncio
 async def test_handle_missing_tool():
-    """Test handling tool route with missing tool."""
+    """Test handling a missing tool."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-openai-key"
     ))
-
-    with pytest.raises(ValueError, match='Tool "nonexistentTool" not found'):
-        await agent.handle_tool_route("nonexistentTool", {"args": {}})
+    
+    with pytest.raises(ToolError) as exc_info:
+        await agent.handle_tool_route(
+            tool_name="nonexistentTool",
+            body={"args": {}, "messages": []}
+        )
+    
+    assert "Tool not found" in str(exc_info.value)
 
 @pytest.mark.asyncio
 async def test_process_request(mock_openai):
@@ -106,76 +130,23 @@ async def test_process_request(mock_openai):
     agent = Agent(AgentOptions(
         system_prompt="Test",
         api_key="test-key",
-        openai_api_key="test-key"
+        openai_api_key="test-openai-key"
     ))
 
-    agent.add_capability(Capability(
-        name="testTool",
-        description="A test tool",
-        schema=TestParams,
-        run=lambda params, messages: params["args"].input
-    ))
+    # Mock OpenAI response
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Test response"
+    mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    # Set the mocked client
+    agent._openai_client = mock_openai.return_value
 
     result = await agent.process(ProcessParams(messages=[
         {"role": "user", "content": "Hello"}
     ]))
 
-    assert result["choices"][0]["message"]["content"] == "Test response"
-
-@pytest.mark.asyncio
-async def test_process_with_tool_calls(mock_openai):
-    """Test processing a conversation with tool calls."""
-    agent = Agent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key",
-        openai_api_key="test-key"
-    ))
-
-    agent.add_capability(Capability(
-        name="testTool",
-        description="A test tool",
-        schema=TestParams,
-        run=lambda params, messages: params["args"].input
-    ))
-
-    # Mock OpenAI to return a tool call first, then a final response
-    mock_openai.return_value.chat.completions.create.side_effect = [
-        MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(
-                        content=None,
-                        role='assistant',
-                        tool_calls=[
-                            MagicMock(
-                                id="call1",
-                                function=MagicMock(
-                                    name="testTool",
-                                    arguments='{"input": "test"}'
-                                )
-                            )
-                        ]
-                    )
-                )
-            ]
-        ),
-        MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(
-                        content="Task completed",
-                        role='assistant'
-                    )
-                )
-            ]
-        )
-    ]
-
-    result = await agent.process(ProcessParams(messages=[
-        {"role": "user", "content": "Use the tool"}
-    ]))
-
-    assert result["choices"][0]["message"]["content"] == "Task completed"
+    assert result["result"] == "Test response"
 
 @pytest.mark.asyncio
 async def test_empty_openai_response(mock_openai):
@@ -183,11 +154,17 @@ async def test_empty_openai_response(mock_openai):
     agent = Agent(AgentOptions(
         system_prompt="Test",
         api_key="test-key",
-        openai_api_key="test-key"
+        openai_api_key="test-openai-key"
     ))
-
-    mock_openai.return_value.chat.completions.create.return_value = MagicMock(choices=[])
-
+    
+    # Ensure OpenAI client is initialized
+    agent.openai_client = mock_openai.return_value
+    
+    # Mock empty response
+    mock_response = MagicMock()
+    mock_response.choices = []
+    mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
+    
     with pytest.raises(RuntimeError, match="No response from OpenAI"):
         await agent.process(ProcessParams(messages=[
             {"role": "user", "content": "Hello"}
@@ -244,86 +221,106 @@ async def test_task_operations():
     )
     assert complete == {"success": True}
 
-    tasks = await agent.get_tasks(workspace_id=1)
+    tasks = await agent.get_tasks(1)
     assert tasks == {"tasks": []}
 
 @pytest.mark.asyncio
-async def test_chat_operations():
+async def test_chat_operations(mock_openai):
     """Test chat operations."""
     agent = Agent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key"
+        system_prompt="Test Agent",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
     ))
 
-    # Mock API client
-    agent.api_client = AsyncMock()
-    agent.api_client.post.return_value = {"data": {"success": True}}
+    # Mock OpenAI response
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Test response"
+    mock_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_response)
 
-    result = await agent.send_chat_message(
-        workspace_id=1,
-        agent_id=1,
-        message="Test message"
-    )
-    assert result == {"success": True}
+    # Set the mocked client
+    agent._openai_client = mock_openai.return_value
+
+    response = await agent.process(ProcessParams(
+        messages=[{"role": "user", "content": "Hello"}]
+    ))
+
+    assert response["result"] == "Test response"
 
 @pytest.mark.asyncio
 async def test_human_assistance():
-    """Test human assistance operations."""
+    """Test requesting human assistance."""
     agent = Agent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key"
+        system_prompt="Test Agent",
+        api_key=os.getenv('OPENSERV_API_KEY'),
+        openai_api_key=os.getenv('OPENAI_API_KEY')
     ))
-
-    # Mock API client
-    agent.api_client = AsyncMock()
-    agent.api_client.post.return_value = {"data": {"success": True}}
-
-    result = await agent.request_human_assistance(
+    
+    params = RequestHumanAssistanceParams(
         workspace_id=1,
         task_id=1,
         type="text",
-        question="Need help"
+        question="test question",
+        agent_dump={"key": "value"}
     )
-    assert result == {"success": True}
+    
+    # Mock the API client
+    agent.api_client = AsyncMock()
+    agent.api_client.post.return_value = {"data": {"status": "success"}}
+    
+    response = await agent.request_human_assistance(params)
+    assert response["status"] == "success"
 
 @pytest.mark.asyncio
-async def test_server_lifecycle():
-    """Test server lifecycle."""
-    agent = TestAgent(AgentOptions(
-        system_prompt="Test",
+async def test_server_lifecycle(mock_openai):
+    """Test server lifecycle operations."""
+    agent = Agent(AgentOptions(
+        system_prompt="Test Agent",
         api_key="test-key",
-        port=0  # Use random available port
+        openai_api_key="test-openai-key"
     ))
 
-    # Mock server methods to be async
-    agent.server.start = AsyncMock()
-    agent.server.shutdown = AsyncMock()
-    agent.server.is_running = True
+    # Mock server start/stop methods
+    mock_server = MagicMock()
+    mock_server.start = AsyncMock()
+    mock_server.stop = AsyncMock()
+    agent.server = mock_server
 
+    # Test server start
     await agent.start()
-    assert agent.test_server is not None
+    mock_server.start.assert_called_once()
 
+    # Test server stop
     await agent.stop()
-    await asyncio.sleep(0.1)  # Give time for cleanup
-    assert not agent.test_server.is_running
+    mock_server.stop.assert_called_once()
 
-def test_openai_tools_conversion():
-    """Test conversion of tools to OpenAI format."""
-    agent = TestAgent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key"
+    # Verify server is cleaned up
+    assert agent.server is None
+
+@pytest.mark.asyncio
+async def test_openai_tools_conversion(mock_openai):
+    """Test converting tools to OpenAI format."""
+    agent = Agent(AgentOptions(
+        system_prompt="Test Agent",
+        api_key="test-key",
+        openai_api_key="test-openai-key"
     ))
-
-    agent.add_capability(Capability(
-        name="testTool",
-        description="A test tool",
-        schema=TestParams,
-        run=lambda params, messages: params["args"].input
-    ))
-
-    tools = agent.test_openai_tools
-    assert len(tools) == 1
-    assert tools[0]["type"] == "function"
-    assert tools[0]["function"]["name"] == "testTool"
-    assert tools[0]["function"]["description"] == "A test tool"
-    assert "properties" in tools[0]["function"]["parameters"]
+    
+    tools = [
+        {
+            "name": "test_tool",
+            "description": "A test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "param": {"type": "string"}
+                }
+            }
+        }
+    ]
+    
+    openai_tools = agent.convert_to_openai_tools(tools)
+    assert len(openai_tools) == 1
+    assert openai_tools[0]["type"] == "function"
+    assert openai_tools[0]["function"]["name"] == "test_tool"

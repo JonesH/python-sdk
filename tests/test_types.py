@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime
 from pydantic import ValidationError
-from src.types import (
+from openserv_sdk.types import (
     AgentKind,
     TaskStatus,
     DoTaskAction,
@@ -27,7 +27,8 @@ from src.types import (
     UpdateTaskStatusParams,
     ProcessParams,
     Integration,
-    Memory
+    Memory,
+    Agent
 )
 
 def test_validate_do_task_action():
@@ -193,20 +194,26 @@ def test_validate_upload_file_params():
     assert params6.workspace_id == 1
 
 def test_validate_get_files_params():
+    """Test validation of GetFilesParams."""
     # Test valid case
     params = GetFilesParams(workspace_id=1)
     assert params.workspace_id == 1
 
     # Test invalid workspaceId types
     with pytest.raises(ValidationError):
-        GetFilesParams(workspace_id="1")  # type: ignore
+        GetFilesParams(workspace_id="invalid")  # String instead of int
 
     with pytest.raises(ValidationError):
-        GetFilesParams(workspace_id=None)  # type: ignore
+        GetFilesParams(workspace_id=-1)  # Negative integer not allowed
 
-    # Test with missing workspaceId
     with pytest.raises(ValidationError):
-        GetFilesParams()  # type: ignore
+        GetFilesParams(workspace_id=0)  # Zero not allowed
+
+    with pytest.raises(ValidationError):
+        GetFilesParams()  # Missing required field
+
+    with pytest.raises(ValidationError):
+        GetFilesParams(workspace_id=None)  # None not allowed
 
 def test_validate_mark_task_as_errored_params():
     params = MarkTaskAsErroredParams(
@@ -543,7 +550,7 @@ def test_validate_integrations():
             goal="test goal",
             bucket_folder="test-folder",
             agents=[
-                AgentBase(
+                Agent(
                     id=2,
                     name="test agent",
                     kind=AgentKind.EXTERNAL,
@@ -621,7 +628,7 @@ def test_validate_respond_chat_message_action_with_all_fields():
             goal="test goal",
             bucket_folder="test-folder",
             agents=[
-                AgentBase(
+                Agent(
                     id=2,
                     name="test agent",
                     kind=AgentKind.EXTERNAL,
