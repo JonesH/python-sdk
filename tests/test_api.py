@@ -172,6 +172,10 @@ async def test_do_task_error_handling(mock_api_key: str) -> None:
         on_error=error_handler
     ))
 
+    # Mock the API client's validation and post method
+    agent.api_client.validate_api_key = AsyncMock()
+    agent.api_client.post = AsyncMock(return_value={"data": {}})
+
     action = DoTaskAction(
         type="do-task",
         me=AgentBase(
@@ -207,6 +211,8 @@ async def test_do_task_error_handling(mock_api_key: str) -> None:
         await agent.test_do_task(action)
 
     assert str(exc_info.value) == str(test_error)
+    assert handled_error == test_error
+    assert handled_context["context"] == "task_execution"
 
 @pytest.mark.asyncio
 async def test_respond_to_chat_error_handling(mock_api_key: str) -> None:
