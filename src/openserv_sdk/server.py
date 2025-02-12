@@ -5,7 +5,8 @@ FastAPI server implementation for the OpenServ Agent.
 import json
 import logging
 import os
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
 import uvicorn
 import asyncio
@@ -25,17 +26,29 @@ class AgentServer:
         self.agent = None
         
         @self.app.post("/")
-        async def handle_root(request: Request):
+        async def handle_root(request: Request) -> Response:
+            """Handle root route."""
             try:
                 body = await request.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Error handling request: {str(e)}", exc_info=True)
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": "Invalid JSON payload"}
+                )
+
+            try:
                 if self.agent:
                     await self.agent.handle_root_route(body)
-                    return {"status": "OK"}
+                    return JSONResponse(content={"status": "OK"})
                 else:
                     raise HTTPException(status_code=500, detail="Agent not initialized")
             except Exception as e:
                 logger.error("Error handling request: %s", str(e), exc_info=True)
-                raise HTTPException(status_code=500, detail=str(e))
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e)}
+                )
             
         @self.app.get("/health")
         async def health_check():

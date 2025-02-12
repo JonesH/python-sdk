@@ -68,6 +68,7 @@ class Agent:
         self._openai_client: Optional[AsyncOpenAI] = None
         self._server: Optional[AgentServer] = None
         self._tools: List[Capability[BaseModel]] = []
+        self._openai_api_key = options.openai_api_key
         
         # Initialize clients
         self.runtime_client = RuntimeClient(self.config.api)
@@ -190,95 +191,28 @@ class Agent:
             raise
 
     async def process(self, params: ProcessParams) -> Dict[str, Any]:
-        """Process a conversation with OpenAI."""
+        """Process a request with the agent."""
+        if not self._openai_api_key:
+            raise ConfigurationError("OpenAI API key is required")
+
         try:
-            # Check for OpenAI API key before attempting to use it
-            if not self.config.openai.api_key:
-                raise ConfigurationError(
-                    'OpenAI API key is required for process(). Please provide it in options or set OPENAI_API_KEY environment variable.'
-                )
-
-            # Create client if not exists
             if not self._openai_client:
-                self._openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
+                self._openai_client = AsyncOpenAI(api_key=self._openai_api_key)
 
-            current_messages = params.messages.copy()
-            completion = None
-            iteration_count = 0
-            MAX_ITERATIONS = 10
+            completion = await self._openai_client.chat.completions.create(
+                messages=[{"role": "user", "content": msg["content"]} for msg in params.messages],
+                model="gpt-4",
+                tools=None
+            )
 
-            while iteration_count < MAX_ITERATIONS:
-                if not self._openai_client:
-                    raise ConfigurationError("OpenAI client not initialized")
+            if not completion.choices or not completion.choices[0].message.content:
+                raise RuntimeError("No response from OpenAI")
 
-                completion = await self._openai_client.chat.completions.create(
-                    model=self.config.openai.model,
-                    messages=current_messages,
-                    tools=self.openai_tools if self._tools else None
-                )
-
-                if not completion.choices or not completion.choices[0].message:
-                    raise RuntimeError('No response from OpenAI')
-
-                last_message = completion.choices[0].message
-
-                # If no tool calls, we're done
-                if not getattr(last_message, 'tool_calls', None):
-                    return completion.model_dump()
-
-                # Process each tool call
-                tool_results = []
-                for tool_call in last_message.tool_calls:
-                    if not tool_call.function:
-                        continue
-
-                    try:
-                        result = await self.handle_tool_route(
-                            tool_name=tool_call.function.name,
-                            body={"args": json.loads(tool_call.function.arguments)}
-                        )
-                        tool_results.append({
-                            'tool_call_id': tool_call.id,
-                            'output': result
-                        })
-                    except Exception as e:
-                        logger.error(f"Tool execution failed: {str(e)}")
-                        if self.config.on_error:
-                            self.config.on_error(e, {"context": "process_tool_call"})
-                        raise
-
-                # Add assistant's response with tool calls
-                current_messages.append({
-                    'role': 'assistant',
-                    'content': None,
-                    'tool_calls': [
-                        {
-                            'id': tc.id,
-                            'type': 'function',
-                            'function': {
-                                'name': tc.function.name,
-                                'arguments': tc.function.arguments
-                            }
-                        } for tc in last_message.tool_calls
-                    ]
-                })
-
-                # Add tool results
-                for result in tool_results:
-                    current_messages.append({
-                        'role': 'tool',
-                        'content': result['output'],
-                        'tool_call_id': result['tool_call_id']
-                    })
-
-                iteration_count += 1
-
-            raise RuntimeError(f"Max iterations ({MAX_ITERATIONS}) reached without completion")
-
-        except Exception as error:
-            logger.error("Error: %s", str(error), exc_info=True)
+            return {"result": completion.choices[0].message.content}
+        except Exception as e:
+            logger.error("Error: %s", str(e), exc_info=True)
             if self.config.on_error:
-                self.config.on_error(error, {"context": "process"})
+                self.config.on_error(e, {"context": "process"})
             raise
 
     def handle_error(self, error: Exception, context: Dict[str, Any] = None) -> None:
