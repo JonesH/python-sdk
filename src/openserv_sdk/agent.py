@@ -327,6 +327,7 @@ class Agent:
 
     async def do_task(self, action: DoTaskAction) -> None:
         """Handle a task execution request."""
+        logger.info(f"Starting task execution for task {action.task.id} in workspace {action.workspace.id}")
         messages = [
             {'role': 'system', 'content': self.config.system_prompt}
         ]
@@ -339,6 +340,7 @@ class Agent:
 
         try:
             # Update status to in-progress
+            logger.info(f"Setting task {action.task.id} status to IN_PROGRESS")
             await self.update_task_status(UpdateTaskStatusParams(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
@@ -346,6 +348,7 @@ class Agent:
             ))
 
             # Execute the task
+            logger.info(f"Executing task {action.task.id}")
             response = await self._runtime_client.execute_task(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
@@ -354,8 +357,11 @@ class Agent:
                 action=action.model_dump()
             )
 
+            logger.info(f"Task {action.task.id} execution response: {response}")
+
             # Handle the response
             if response and "error" in response:
+                logger.error(f"Task {action.task.id} failed with error: {response['error']}")
                 await self.mark_task_as_errored(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
@@ -363,14 +369,25 @@ class Agent:
                 )
             else:
                 # Update status to done
+                logger.info(f"Setting task {action.task.id} status to DONE")
                 await self.update_task_status(UpdateTaskStatusParams(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
                     status=TaskStatus.DONE
                 ))
+                
+                # If there's output in the response, complete the task with it
+                if response and "output" in response:
+                    logger.info(f"Completing task {action.task.id} with output")
+                    await self.complete_task(
+                        workspace_id=action.workspace.id,
+                        task_id=action.task.id,
+                        output=str(response["output"])
+                    )
 
         except Exception as error:
-            logger.error("Task execution failed: %s", str(error), exc_info=True)
+            logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
+            logger.error(f"Stack trace: {traceback.format_exc()}")
             # Mark task as errored
             await self.mark_task_as_errored(
                 workspace_id=action.workspace.id,
