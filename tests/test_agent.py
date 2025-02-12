@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
-from typing import Dict
+from typing import Dict, Any
 
 from openserv_sdk.agent import Agent
 from openserv_sdk.capability import Capability
@@ -65,6 +65,13 @@ class TestAgent(Agent):
     @property
     def test_openai_tools(self):
         return self.openai_tools
+        
+    def get_test_config(self) -> Dict[str, Any]:
+        """Get test configuration."""
+        return {
+            "port": self.test_port,
+            "server": self.test_server
+        }
 
 def test_agent_initialization():
     """Test agent initialization with options."""
@@ -228,7 +235,7 @@ async def test_task_operations():
     )
     assert complete == {"success": True}
 
-    tasks = await agent.get_tasks(1)
+    tasks = await agent.get_tasks(GetTasksParams(workspace_id=1))
     assert tasks == {"tasks": []}
 
 @pytest.mark.asyncio
