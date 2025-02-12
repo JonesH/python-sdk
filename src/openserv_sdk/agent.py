@@ -6,6 +6,7 @@ import os
 import json
 import logging
 import asyncio
+import traceback
 from typing import Dict, Any, List, Optional, Union, TypeVar, Generic
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -18,12 +19,10 @@ from openserv_sdk.capability import Capability
 from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError
 from openserv_sdk.types import (
     AgentOptions, ProcessParams, RespondChatMessageAction,
-    DoTaskAction, IntegrationCallRequest,
+    TaskStatus, DoTaskAction, IntegrationCallRequest,
     GetTasksParams, GetTaskDetailParams, GetAgentsParams,
-    UploadFileParams,
-    CreateTaskParams, AddLogToTaskParams,
-    RequestHumanAssistanceParams, UpdateTaskStatusParams,
-    SendChatMessageParams, TaskStatus
+    UploadFileParams, SendChatMessageParams, CreateTaskParams, AddLogToTaskParams,
+    RequestHumanAssistanceParams, UpdateTaskStatusParams
 )
 
 logger = logging.getLogger(__name__)
@@ -168,12 +167,14 @@ class Agent:
             self.add_capability(capability)
         return self
 
-    def handle_error(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
-        """Default error handler that logs the error or calls the custom handler if provided."""
+    def handle_error(self, error: Exception, context: Dict[str, Any] = None) -> None:
+        """Handle errors by logging and calling the error handler if provided."""
+        logger.error(f"Error: {str(error)}", exc_info=True)
         if self.config.on_error:
-            self.config.on_error(error, context)
-        else:
-            logger.error(f"Error in agent operation: {str(error)}", extra={"error": error, **context} if context else {"error": error})
+            try:
+                self.config.on_error(error, context)
+            except Exception as e:
+                logger.error(f"Error handler failed: {str(e)}", exc_info=True)
 
     async def process(self, params: ProcessParams) -> Dict[str, Any]:
         """Process a request with the agent."""
@@ -272,24 +273,24 @@ class Agent:
 
     async def handle_root_route(self, body: Dict[str, Any]) -> None:
         """Handle the root route for task execution and chat message responses."""
+        logger.info("Handling root route request with body type: %s", body.get('type'))
         try:
             if body.get('type') == 'do-task':
+                logger.info("Processing do-task action")
                 action = DoTaskAction.model_validate(body)
-                # Create task but store its future
+                # Create task and store its future
                 task = asyncio.create_task(self.do_task(action))
                 # Add error handler
                 task.add_done_callback(self._handle_task_completion)
             elif body.get('type') == 'respond-chat-message':
+                logger.info("Processing respond-chat-message action")
                 action = RespondChatMessageAction.model_validate(body)
                 chat_task = asyncio.create_task(self.respond_to_chat(action))
                 chat_task.add_done_callback(self._handle_chat_completion)
             else:
                 raise ValueError('Invalid action type')
         except Exception as error:
-            self.handle_error(error, {
-                "request": body,
-                "context": "handle_root_route"
-            })
+            logger.error("Root route handler failed: %s", str(error), exc_info=True)
             raise
 
     def _handle_task_completion(self, future: asyncio.Future) -> None:
