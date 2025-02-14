@@ -370,7 +370,7 @@ class Agent:
                 return
 
             # Check for error in response
-            if "error" in response:
+            if isinstance(response, dict) and "error" in response:
                 logger.error(f"Task {action.task.id} failed with error: {response['error']}")
                 await self.mark_task_as_errored(
                     workspace_id=action.workspace.id,
@@ -380,7 +380,11 @@ class Agent:
                 return
 
             # Get output from response
-            output = response.get("output") or response.get("result") or response.get("data", {}).get("output")
+            output = None
+            if isinstance(response, str):
+                output = response
+            elif isinstance(response, dict):
+                output = response.get("output") or response.get("result") or response.get("data", {}).get("output") or str(response)
             
             if output:
                 # First complete the task with output
@@ -400,7 +404,14 @@ class Agent:
                 ))
             else:
                 logger.warning(f"Task {action.task.id} completed but no output was provided in response: {response}")
-                # Update status to done even without output
+                # If we have a response but no explicit output, use the response itself as output
+                response_str = str(response)
+                logger.info(f"Using full response as output: {response_str}")
+                await self.complete_task(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    output=response_str
+                )
                 await self.update_task_status(UpdateTaskStatusParams(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
