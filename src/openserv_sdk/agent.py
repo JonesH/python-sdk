@@ -360,20 +360,35 @@ class Agent:
             logger.info(f"Task {action.task.id} execution response: {response}")
 
             # Handle the response
-            if response and "error" in response:
+            if not response:
+                logger.error(f"Task {action.task.id} failed: No response received")
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error="No response received from task execution"
+                )
+                return
+
+            # Check for error in response
+            if "error" in response:
                 logger.error(f"Task {action.task.id} failed with error: {response['error']}")
                 await self.mark_task_as_errored(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
                     error=str(response["error"])
                 )
-            elif response and "output" in response:
+                return
+
+            # Get output from response
+            output = response.get("output") or response.get("result") or response.get("data", {}).get("output")
+            
+            if output:
                 # First complete the task with output
-                logger.info(f"Completing task {action.task.id} with output")
+                logger.info(f"Completing task {action.task.id} with output: {output}")
                 await self.complete_task(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
-                    output=str(response["output"])
+                    output=str(output)
                 )
                 
                 # Then update status to done
@@ -384,7 +399,7 @@ class Agent:
                     status=TaskStatus.DONE
                 ))
             else:
-                logger.warning(f"Task {action.task.id} completed but no output was provided")
+                logger.warning(f"Task {action.task.id} completed but no output was provided in response: {response}")
                 # Update status to done even without output
                 await self.update_task_status(UpdateTaskStatusParams(
                     workspace_id=action.workspace.id,
