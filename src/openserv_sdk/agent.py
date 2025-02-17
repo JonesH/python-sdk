@@ -327,7 +327,9 @@ class Agent:
 
     async def do_task(self, action: DoTaskAction) -> None:
         """Handle a task execution request."""
-        logger.info(f"Starting task execution for task {action.task.id} in workspace {action.workspace.id}")
+        logger.info(f"Processing task: {action.task}")
+        logger.info(f"Task ID: {action.task.id}")
+
         messages = [
             {'role': 'system', 'content': self.config.system_prompt}
         ]
@@ -347,9 +349,9 @@ class Agent:
                 status=TaskStatus.IN_PROGRESS
             ))
 
-            # Execute the task
+            # Execute the task and let the runtime handle the response
             logger.info(f"Executing task {action.task.id}")
-            response = await self._runtime_client.execute_task(
+            await self._runtime_client.execute_task(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
                 tools=[self._convert_tool_to_json_schema(t) for t in self._tools],
@@ -357,71 +359,9 @@ class Agent:
                 action=action.model_dump()
             )
 
-            logger.info(f"Task {action.task.id} execution response: {response}")
-
-            # Handle the response
-            if not response:
-                logger.error(f"Task {action.task.id} failed: No response received")
-                await self.mark_task_as_errored(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    error="No response received from task execution"
-                )
-                return
-
-            # Check for error in response
-            if isinstance(response, dict) and "error" in response:
-                logger.error(f"Task {action.task.id} failed with error: {response['error']}")
-                await self.mark_task_as_errored(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    error=str(response["error"])
-                )
-                return
-
-            # Get output from response
-            output = None
-            if isinstance(response, str):
-                output = response
-            elif isinstance(response, dict):
-                output = response.get("output") or response.get("result") or response.get("data", {}).get("output") or str(response)
-            
-            if output:
-                # First complete the task with output
-                logger.info(f"Completing task {action.task.id} with output: {output}")
-                await self.complete_task(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    output=str(output)
-                )
-                
-                # Then update status to done
-                logger.info(f"Setting task {action.task.id} status to DONE")
-                await self.update_task_status(UpdateTaskStatusParams(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    status=TaskStatus.DONE
-                ))
-            else:
-                logger.warning(f"Task {action.task.id} completed but no output was provided in response: {response}")
-                # If we have a response but no explicit output, use the response itself as output
-                response_str = str(response)
-                logger.info(f"Using full response as output: {response_str}")
-                await self.complete_task(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    output=response_str
-                )
-                await self.update_task_status(UpdateTaskStatusParams(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    status=TaskStatus.DONE
-                ))
-
         except Exception as error:
             logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
             logger.error(f"Stack trace: {traceback.format_exc()}")
-            # Mark task as errored
             await self.mark_task_as_errored(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
