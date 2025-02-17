@@ -342,12 +342,16 @@ class Agent:
 
         try:
             # Update status to in-progress
-            logger.info(f"Setting task {action.task.id} status to IN_PROGRESS")
-            await self.update_task_status(UpdateTaskStatusParams(
-                workspace_id=action.workspace.id,
-                task_id=action.task.id,
-                status=TaskStatus.IN_PROGRESS
-            ))
+            try:
+                logger.info(f"Setting task {action.task.id} status to IN_PROGRESS")
+                await self.update_task_status(UpdateTaskStatusParams(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    status=TaskStatus.IN_PROGRESS
+                ))
+            except Exception as status_error:
+                logger.warning(f"Failed to update task status: {str(status_error)}")
+                # Continue execution even if status update fails
 
             # Execute the task and let the runtime handle the response
             logger.info(f"Executing task {action.task.id}")
@@ -362,11 +366,16 @@ class Agent:
         except Exception as error:
             logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
             logger.error(f"Stack trace: {traceback.format_exc()}")
-            await self.mark_task_as_errored(
-                workspace_id=action.workspace.id,
-                task_id=action.task.id,
-                error=str(error)
-            )
+
+            try:
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(error)
+                )
+            except Exception as mark_error:
+                logger.error(f"Failed to mark task as errored: {str(mark_error)}")
+            
             self.handle_error(error, {"context": "task_execution"})
             raise
 
@@ -450,10 +459,14 @@ class Agent:
 
     async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
         """Mark a task as errored."""
-        response = await self._api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/error", {
-            "error": error
-        })
-        return response["data"]
+        try:
+            response = await self._api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/error", {
+                "error": error
+            })
+            return response.get("data", {"status": "error", "error": error})
+        except Exception as e:
+            logger.error(f"Failed to mark task as errored: {str(e)}")
+            return {"status": "error", "error": error}
 
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
@@ -523,11 +536,15 @@ class Agent:
 
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Update a task's status."""
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
-            {"status": params.status}  # status is of type TaskStatus
-        )
-        return response["data"]
+        try:
+            response = await self._api_client.post(
+                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
+                {"status": params.status}
+            )
+            return response.get("data", {"status": params.status})
+        except Exception as e:
+            logger.error(f"Failed to update task status: {str(e)}")
+            return {"status": params.status}
 
     async def call_integration(self, integration: IntegrationCallRequest) -> Dict[str, Any]:
         """
