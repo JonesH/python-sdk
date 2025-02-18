@@ -135,12 +135,22 @@ class ListFilesParams:
 
 @dataclass
 class UploadFileParams:
-    """Parameters for uploading a file to a workspace."""
+    """Parameters for uploading a file to a workspace.
+    
+    Attributes:
+        workspace_id: The ID of the workspace to upload to
+        path: The path/name for the file in the workspace
+        file: The file content as either bytes or string
+        task_ids: Optional task ID(s) to associate with the file
+        skip_summarizer: Optional flag to skip content summarization
+        content_type: Optional content type to override automatic detection
+    """
     workspace_id: int
     path: str
     file: Union[str, bytes]
     task_ids: Optional[Union[int, List[int]]] = None
     skip_summarizer: Optional[bool] = None
+    content_type: Optional[str] = None
 
 class MarkTaskAsErroredParams(BaseModel):
     workspace_id: int

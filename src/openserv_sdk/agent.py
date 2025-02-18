@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional, Union, TypeVar, Generic
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 import aiohttp
+import mimetypes
 
 from openserv_sdk.config import Config, APIConfig, OpenAIConfig, ServerConfig
 from openserv_sdk.client import OpenServClient, RuntimeClient
@@ -437,6 +438,7 @@ class Agent:
                 file: The file content as either bytes or string
                 task_ids: Optional task ID(s) to associate with the file
                 skip_summarizer: Optional flag to skip content summarization
+                content_type: Optional content type to override automatic detection
                 
         Returns:
             Dictionary containing the upload response with file ID
@@ -457,10 +459,11 @@ class Agent:
         
         # Handle file content
         if isinstance(params.file, bytes):
-            # Binary content - use octet-stream
-            data.add_field('file', params.file, filename=params.path, content_type='application/octet-stream')
+            # Use provided content type or detect from file extension
+            content_type = params.content_type or self._get_content_type(params.path)
+            data.add_field('file', params.file, filename=params.path, content_type=content_type)
         else:
-            # String content - use text/plain and encode as UTF-8
+            # String content is always text/plain
             data.add_field('file', params.file.encode('utf-8'), filename=params.path, content_type='text/plain')
 
         response = await self._api_client.post(
@@ -468,6 +471,12 @@ class Agent:
             data=data
         )
         return response["data"]
+
+    @staticmethod
+    def _get_content_type(filename: str) -> str:
+        """Get content type based on file extension."""
+        content_type, _ = mimetypes.guess_type(filename)
+        return content_type or 'application/octet-stream'
 
     async def get_tasks(self, workspace_id: Union[int, GetTasksParams]) -> Dict[str, Any]:
         """Gets a list of tasks in a workspace."""
