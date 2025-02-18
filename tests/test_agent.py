@@ -2,13 +2,14 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
 from typing import Dict, Any
+import aiohttp
 
 from openserv_sdk.agent import Agent
 from openserv_sdk.capability import Capability
 from openserv_sdk.types import (
     AgentOptions, ProcessParams, GetTasksParams,
     RequestHumanAssistanceParams, TaskStatus, UploadFileParams,
-    UpdateTaskStatusParams
+    UpdateTaskStatusParams, ListFilesParams
 )
 from openserv_sdk.exceptions import RuntimeError, ToolError
 from pydantic import BaseModel
@@ -184,28 +185,61 @@ async def test_empty_openai_response(mock_openai):
 
 @pytest.mark.asyncio
 async def test_file_operations():
-    """Test file operations."""
-    agent = Agent(AgentOptions(
-        system_prompt="Test",
-        api_key="test-key"
-    ))
-
-    # Mock API client
-    agent.api_client = AsyncMock()
-    agent.api_client.get.return_value = {"data": {"files": []}}
-    agent.api_client.post.return_value = {"data": {"fileId": "test-file-id"}}
-
-    files = await agent.get_files(workspace_id=1)
-    assert files == {"files": []}
-
-    upload_result = await agent.upload_file(
-        params=UploadFileParams(
-            workspace_id=1,
-            path="test.txt",
-            file="test content"
+    """Test file operations in agent."""
+    agent = Agent(
+        AgentOptions(
+            api_key="test-key",
+            platform_url="http://test-platform",
+            runtime_url="http://test-runtime",
+            system_prompt="Test system prompt"
         )
     )
-    assert upload_result == {"fileId": "test-file-id"}
+
+    # Mock API client responses
+    agent._api_client.get = AsyncMock(return_value={"data": []})
+    agent._api_client.post = AsyncMock(return_value={"data": {"id": "test-file-id"}})
+
+    # Test file listing
+    files = await agent.get_files(workspace_id=1)
+    assert files == []
+
+    # Test text file upload
+    text_content = "Hello World"
+    upload_response = await agent.upload_file(
+        UploadFileParams(
+            workspace_id=1,
+            path="test.txt",
+            file=text_content,
+            task_ids=[1, 2],
+            skip_summarizer=True
+        )
+    )
+    assert upload_response == {"id": "test-file-id"}
+
+    # Test binary file upload
+    binary_content = b"Binary Content"
+    upload_response = await agent.upload_file(
+        UploadFileParams(
+            workspace_id=1,
+            path="test.bin",
+            file=binary_content
+        )
+    )
+    assert upload_response == {"id": "test-file-id"}
+
+    # Verify API calls
+    agent._api_client.get.assert_called_once_with("/workspaces/1/file")
+    
+    # Verify post calls for both uploads
+    assert agent._api_client.post.call_count == 2
+    
+    # Get the FormData from the first call (text file)
+    text_call_args = agent._api_client.post.call_args_list[0][1]
+    assert isinstance(text_call_args['data'], aiohttp.FormData)
+    
+    # Get the FormData from the second call (binary file)
+    binary_call_args = agent._api_client.post.call_args_list[1][1]
+    assert isinstance(binary_call_args['data'], aiohttp.FormData)
 
 @pytest.mark.asyncio
 async def test_task_operations():

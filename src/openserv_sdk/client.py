@@ -3,12 +3,13 @@ API client implementations for OpenServ and Runtime services.
 """
 
 import httpx
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union, BinaryIO
 from .config import APIConfig
 from .exceptions import APIError, AuthenticationError
 import logging
 import json
 from datetime import datetime
+import aiohttp
 
 # Configure logging to show INFO and above
 logging.basicConfig(level=logging.INFO)
@@ -30,10 +31,7 @@ class BaseClient:
     def __init__(self, config: APIConfig):
         self.config = config
         self.client = httpx.AsyncClient(
-            headers={
-                'Content-Type': 'application/json',
-                'x-openserv-key': config.api_key
-            },
+            headers={'x-openserv-key': config.api_key},
             verify=False if config.platform_url.startswith('https://') else True
         )
     
@@ -47,22 +45,55 @@ class BaseClient:
         path: str,
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, str]] = None,
+        form_data: Optional[aiohttp.FormData] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Make an HTTP request and handle common error cases."""
+        """Make an HTTP request and handle common error cases.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: Request path
+            json_data: Optional JSON data for request body
+            params: Optional query parameters
+            form_data: Optional form data for multipart requests
+            headers: Optional additional headers
+            
+        Returns:
+            Response data as dictionary or None
+            
+        Raises:
+            APIError: For API-related errors
+            AuthenticationError: For authentication failures
+        """
         try:
-            # Pre-serialize JSON with our custom encoder
+            # Start with base headers
+            request_headers = {}
+            if headers:
+                request_headers.update(headers)
+
+            # Prepare request data
             content = None
-            headers = {}
+            files = None
+            
             if json_data is not None:
                 content = json.dumps(json_data, cls=DateTimeEncoder).encode('utf-8')
-                headers['Content-Type'] = 'application/json'
+                request_headers['Content-Type'] = 'application/json'
+            elif form_data is not None:
+                # Convert aiohttp FormData to httpx files format
+                files = {}
+                for field_name, field_value in form_data._fields:
+                    if isinstance(field_value[0], bytes):
+                        files[field_name] = (field_value[2], field_value[0], 'application/octet-stream')
+                    else:
+                        files[field_name] = (None, str(field_value[0]))
 
             response = await self.client.request(
                 method,
                 path,
                 content=content,
                 params=params,
-                headers=headers,
+                headers=request_headers,
+                files=files
             )
             
             logger.info("Response status: %d", response.status_code)
@@ -109,25 +140,45 @@ class OpenServClient(BaseClient):
     def __init__(self, config: APIConfig):
         super().__init__(config)
         
-    async def get(self, path: str) -> Dict[str, Any]:
+    async def get(self, path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Make a GET request."""
         url = f"{self.config.platform_url}{path}"
-        return await self._request('GET', url)
+        return await self._request('GET', url, params=params)
         
-    async def post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Make a POST request."""
+    async def post(
+        self,
+        path: str,
+        data: Union[Dict[str, Any], aiohttp.FormData],
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """Make a POST request.
+        
+        Args:
+            path: The API endpoint path
+            data: The request data, either as a dict for JSON or FormData for multipart
+            headers: Optional custom headers to include in the request
+            
+        Returns:
+            Response data as dictionary
+        """
         url = f"{self.config.platform_url}{path}"
-        return await self._request('POST', url, json_data=data)
+        return await self._request(
+            'POST',
+            url,
+            json_data=data if not isinstance(data, aiohttp.FormData) else None,
+            form_data=data if isinstance(data, aiohttp.FormData) else None,
+            headers=headers
+        )
         
-    async def put(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def put(self, path: str, data: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Make a PUT request."""
         url = f"{self.config.platform_url}{path}"
-        return await self._request('PUT', url, json_data=data)
+        return await self._request('PUT', url, json_data=data, headers=headers)
         
-    async def delete(self, path: str) -> Dict[str, Any]:
+    async def delete(self, path: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Make a DELETE request."""
         url = f"{self.config.platform_url}{path}"
-        return await self._request('DELETE', url)
+        return await self._request('DELETE', url, headers=headers)
 
 class RuntimeClient(BaseClient):
     """Client for making requests to the OpenServ Runtime API."""
@@ -135,7 +186,14 @@ class RuntimeClient(BaseClient):
     def __init__(self, config: APIConfig):
         super().__init__(config)
         
-    async def execute_task(self, workspace_id: int, task_id: int, tools: list, messages: list, action: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_task(
+        self,
+        workspace_id: int,
+        task_id: int,
+        tools: list,
+        messages: list,
+        action: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Execute a task."""
         url = f"{self.config.runtime_url}/runtime/execute"
         return await self._request('POST', url, json_data={
@@ -146,7 +204,12 @@ class RuntimeClient(BaseClient):
             'action': action
         })
         
-    async def handle_chat(self, tools: list, messages: list, action: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_chat(
+        self,
+        tools: list,
+        messages: list,
+        action: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Handle a chat message."""
         url = f"{self.config.runtime_url}/runtime/chat"
         return await self._request('POST', url, json_data={

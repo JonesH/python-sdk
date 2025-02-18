@@ -428,22 +428,40 @@ class Agent:
         return response["data"]
 
     async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
-        """Upload a file to a workspace."""
+        """Upload a file to a workspace.
+        
+        Args:
+            params: UploadFileParams containing:
+                workspace_id: The ID of the workspace to upload to
+                path: The path/name for the file in the workspace
+                file: The file content as either bytes or string
+                task_ids: Optional task ID(s) to associate with the file
+                skip_summarizer: Optional flag to skip content summarization
+                
+        Returns:
+            Dictionary containing the upload response with file ID
+        """
         data = aiohttp.FormData()
         data.add_field('path', params.path)
+        
+        # Handle task IDs
         if params.task_ids is not None:
-            data.add_field('taskIds', json.dumps(params.task_ids))
+            if isinstance(params.task_ids, list):
+                data.add_field('taskIds', json.dumps(params.task_ids))
+            else:
+                data.add_field('taskIds', json.dumps([params.task_ids]))
+        
+        # Handle skip summarizer flag
         if params.skip_summarizer is not None:
             data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
         
-        # Convert file content to bytes if it's a string
+        # Convert string content to bytes if needed
         file_content = params.file if isinstance(params.file, bytes) else params.file.encode()
-        data.add_field('file', file_content)
+        data.add_field('file', file_content, filename=params.path)
 
         response = await self._api_client.post(
             f"/workspaces/{params.workspace_id}/file",
-            data=data,
-            headers={'Content-Type': 'multipart/form-data'}
+            data=data
         )
         return response["data"]
 
