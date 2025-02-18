@@ -62,7 +62,7 @@ async def test_upload_file_workflow(test_agent):
     """Test the complete file upload workflow."""
     # Mock the API response
     test_agent.api_client.post.return_value = {
-        "data": {"fileId": "test-file-123"}
+        "data": {"file_id": "test-file-123"}
     }
     
     # Test with string content
@@ -74,7 +74,7 @@ async def test_upload_file_workflow(test_agent):
         skip_summarizer=True
     )
     result = await test_agent.upload_file(text_params)
-    assert result == {"fileId": "test-file-123"}
+    assert result == {"file_id": "test-file-123"}
     
     # Test with binary content
     binary_params = UploadFileParams(
@@ -85,14 +85,14 @@ async def test_upload_file_workflow(test_agent):
         skip_summarizer=False
     )
     result = await test_agent.upload_file(binary_params)
-    assert result == {"fileId": "test-file-123"}
+    assert result == {"file_id": "test-file-123"}
 
 @pytest.mark.asyncio
 async def test_task_operations_workflow(test_agent):
     """Test all task-related operations."""
     # Mock responses for all API calls
     test_agent.api_client.post.side_effect = [
-        {"data": {"taskId": "task-123"}},  # Create task
+        {"data": {"task_id": "task-123"}},  # Create task
         {"data": {"status": "success"}},   # First status update
         {"data": {"status": "success"}},   # Second status update
         {"data": {"status": "success"}},   # Third status update
@@ -114,7 +114,7 @@ async def test_task_operations_workflow(test_agent):
         dependencies=[3, 4]
     )
     create_result = await test_agent.create_task(create_params)
-    assert create_result == {"taskId": "task-123"}
+    assert create_result == {"task_id": "task-123"}
     
     # Get task details
     detail_params = GetTaskDetailParams(workspace_id=1, task_id=2)
@@ -172,14 +172,14 @@ async def test_process_and_chat_workflow(test_agent):
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         messages=[
             ChatMessage(
                 id=1,
                 author="user",
                 message="Hello",
-                createdAt=datetime.now()
+                created_at=datetime.now()
             )
         ],
         workspace=Workspace(
@@ -199,23 +199,23 @@ async def test_task_execution_workflow(test_agent):
     # Mock runtime client response
     test_agent.runtime_client.execute_task.return_value = {"data": {"status": "success"}}
     
-    # Test do task action
+    # Create task action
     task_action = DoTaskAction(
         type="do-task",
         me=AgentBase(
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -226,12 +226,13 @@ async def test_task_execution_workflow(test_agent):
         integrations=[],
         memories=[]
     )
+
+    # Execute task
     await test_agent.do_task(task_action)
     
-    # Verify runtime client was called with correct parameters
+    # Verify runtime client call
     test_agent.runtime_client.execute_task.assert_called_once()
     call_args = test_agent.runtime_client.execute_task.call_args
-    assert call_args is not None
     assert call_args[1]["workspace_id"] == 1
     assert call_args[1]["task_id"] == 1
 

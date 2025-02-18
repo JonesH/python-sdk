@@ -1,4 +1,3 @@
-"""
 # OpenServ Python SDK
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
@@ -25,27 +24,59 @@ A powerful Python framework for building non-deterministic AI agents with advanc
 
 ## Installation
 
+### Prerequisites
+
+- Python 3.8 or higher
+- pip (Python package installer)
+- Virtual environment (recommended)
+
 ### Option 1: Install from GitHub
 ```bash
-pip install git+https://github.com/openserv-labs/python-sdk.git
+pip install git+https://github.com/openserv/python-sdk.git
 ```
 
-### Option 2: Local Installation
+### Option 2: Local Development Installation
 ```bash
 # Clone the repository
-git clone https://github.com/openserv-labs/python-sdk.git
+git clone https://github.com/openserv/python-sdk.git
 
 # Navigate to the project directory
 cd python-sdk
 
-# Install in editable mode
-pip install -e .
+# Create and activate virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+
+# Install in editable mode with all dependencies
+pip install -e ".[test]"
 ```
 
-### Option 3: PyPI (Coming Soon)
-```bash
-pip install openserv-sdk
-```
+## Naming Conventions
+
+The SDK follows Python naming conventions while maintaining API compatibility:
+
+- **Python Code**: Uses snake_case for method names and parameters (e.g., `workspace_id`, `task_ids`)
+- **API Communication**: Automatically converts between snake_case (Python) and camelCase (API) using Pydantic aliases
+- **Example Usage**:
+  ```python
+  # Python code uses snake_case
+  params = UploadFileParams(
+      workspace_id=1,          # Python style
+      path="test.txt",
+      file="content",
+      task_ids=[1, 2],        # Python style
+      skip_summarizer=True     # Python style
+  )
+
+  # Automatically serializes to camelCase for API
+  # {
+  #     "workspaceId": 1,     # API style
+  #     "path": "test.txt",
+  #     "file": "content",
+  #     "taskIds": [1, 2],    # API style
+  #     "skipSummarizer": true # API style
+  # }
+  ```
 
 ## Quick Start
 
@@ -151,6 +182,10 @@ OpenServ offers three levels of control to match your development needs:
 
 *Required for OpenAI integration features
 
+## Development
+
+For development setup and testing instructions, see [TESTING.md](TESTING.md).
+
 ## Examples
 
 Check out our [examples directory](examples/) for more detailed implementation examples, including:
@@ -164,5 +199,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-Built with ❤️ by [OpenServ Labs](https://openserv.ai)
-"""
+Built with ❤️ by [OpenServ](https://openserv.ai)

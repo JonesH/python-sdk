@@ -38,16 +38,16 @@ def test_validate_do_task_action():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -70,12 +70,12 @@ def test_validate_respond_chat_message_action():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         messages=[
             ChatMessage(
                 author="user",
-                createdAt=datetime.now(),
+                created_at=datetime.now(),
                 id=1,
                 message="test message"
             )
@@ -103,7 +103,7 @@ def test_reject_invalid_action_type():
                 id=1,
                 name="test-agent",
                 kind=AgentKind.EXTERNAL,
-                isBuiltByAgentBuilder=False
+                is_built_by_agent_builder=False
             )
         )
 
@@ -115,7 +115,7 @@ def test_reject_invalid_do_task_action():
                 id=1,
                 name="test-agent",
                 kind="invalid-kind",  # type: ignore
-                isBuiltByAgentBuilder=False
+                is_built_by_agent_builder=False
             )
         )
 
@@ -127,12 +127,12 @@ def test_reject_invalid_respond_chat_message_action():
                 id=1,
                 name="test-agent",
                 kind=AgentKind.EXTERNAL,
-                isBuiltByAgentBuilder=False
+                is_built_by_agent_builder=False
             ),
             messages=[
                 ChatMessage(
                     author="invalid-author",  # type: ignore
-                    createdAt=datetime.now(),
+                    created_at=datetime.now(),
                     id=1,
                     message="test message"
                 )
@@ -277,17 +277,17 @@ def test_validate_do_task_action_with_agent_builder():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=True,
-            systemPrompt="You are a test agent"
+            is_built_by_agent_builder=True,
+            system_prompt="You are a test agent"
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -299,8 +299,8 @@ def test_validate_do_task_action_with_agent_builder():
         memories=[]
     )
 
-    assert action.me.isBuiltByAgentBuilder is True
-    assert action.me.systemPrompt == "You are a test agent"
+    assert action.me.is_built_by_agent_builder is True
+    assert action.me.system_prompt == "You are a test agent"
 
 def test_validate_get_agents_params():
     params = GetAgentsParams(workspace_id=1)
@@ -393,13 +393,13 @@ def test_validate_task_dependencies():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[
                 TaskDependency(
@@ -417,7 +417,7 @@ def test_validate_task_dependencies():
                     ]
                 )
             ],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -439,13 +439,13 @@ def test_validate_task_dependencies():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[
                 TaskDependency(
@@ -463,7 +463,7 @@ def test_validate_task_dependencies():
                     ]
                 )
             ],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -485,31 +485,31 @@ def test_validate_human_assistance_requests():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[],
-            humanAssistanceRequests=[
+            human_assistance_requests=[
                 HumanAssistanceRequest(
                     id=2,
                     type="text",
                     question="test question",
                     status="pending",
-                    agentDump={"data": "test data"},
-                    humanResponse=None
+                    agent_dump={"data": "test data"},
+                    human_response=None
                 ),
                 HumanAssistanceRequest(
                     id=3,
                     type="project-manager-plan-review",
                     question="test plan review",
                     status="responded",
-                    agentDump={"plan": "test plan"},
-                    humanResponse="approved"
+                    agent_dump={"plan": "test plan"},
+                    human_response="approved"
                 )
             ]
         ),
@@ -523,9 +523,9 @@ def test_validate_human_assistance_requests():
         memories=[]
     )
 
-    assert len(action.task.humanAssistanceRequests) == 2
-    assert action.task.humanAssistanceRequests[0].status == "pending"
-    assert action.task.humanAssistanceRequests[1].humanResponse == "approved"
+    assert len(action.task.human_assistance_requests) == 2
+    assert action.task.human_assistance_requests[0].status == "pending"
+    assert action.task.human_assistance_requests[1].human_response == "approved"
 
 def test_validate_integrations():
     action = DoTaskAction(
@@ -534,16 +534,16 @@ def test_validate_integrations():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=False
+            is_built_by_agent_builder=False
         ),
         task=Task(
             id=1,
             description="test task",
             body="test body",
-            expectedOutput="test output",
+            expected_output="test output",
             input="test input",
             dependencies=[],
-            humanAssistanceRequests=[]
+            human_assistance_requests=[]
         ),
         workspace=Workspace(
             id=1,
@@ -567,7 +567,7 @@ def test_validate_integrations():
                 created="2024-01-01",
                 metadata={"key": "value"},
                 scopes=["read", "write"],
-                openAPI={
+                open_api={
                     "title": "Test API",
                     "description": "Test API description"
                 }
@@ -579,7 +579,7 @@ def test_validate_integrations():
                 provider="test-2",
                 created="2024-01-02",
                 metadata=None,
-                openAPI={
+                open_api={
                     "title": "Test API 2",
                     "description": "Test API description 2"
                 }
@@ -589,7 +589,7 @@ def test_validate_integrations():
             Memory(
                 id=5,
                 memory="test memory",
-                createdAt=datetime(2024, 1, 1)
+                created_at=datetime(2024, 1, 1)
             )
         ]
     )
@@ -606,19 +606,19 @@ def test_validate_respond_chat_message_action_with_all_fields():
             id=1,
             name="test-agent",
             kind=AgentKind.EXTERNAL,
-            isBuiltByAgentBuilder=True,
-            systemPrompt="You are a test agent"
+            is_built_by_agent_builder=True,
+            system_prompt="You are a test agent"
         ),
         messages=[
             ChatMessage(
                 author="user",
-                createdAt=datetime.now(),
+                created_at=datetime.now(),
                 id=1,
                 message="test message"
             ),
             ChatMessage(
                 author="agent",
-                createdAt=datetime.now(),
+                created_at=datetime.now(),
                 id=2,
                 message="test response"
             )
@@ -645,7 +645,7 @@ def test_validate_respond_chat_message_action_with_all_fields():
                 created="2024-01-01",
                 metadata={"key": "value"},
                 scopes=["read", "write"],
-                openAPI={
+                open_api={
                     "title": "Test API",
                     "description": "Test API description"
                 }
@@ -655,12 +655,12 @@ def test_validate_respond_chat_message_action_with_all_fields():
             Memory(
                 id=4,
                 memory="test memory",
-                createdAt=datetime(2024, 1, 1)
+                created_at=datetime(2024, 1, 1)
             )
         ]
     )
 
-    assert action.me.isBuiltByAgentBuilder is True
+    assert action.me.is_built_by_agent_builder is True
     assert len(action.messages) == 2
     assert len(action.workspace.agents) == 1
     assert len(action.integrations) == 1

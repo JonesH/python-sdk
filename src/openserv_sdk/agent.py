@@ -23,7 +23,7 @@ from openserv_sdk.types import (
     TaskStatus, DoTaskAction, IntegrationCallRequest,
     GetTasksParams, GetTaskDetailParams, GetAgentsParams,
     UploadFileParams, SendChatMessageParams, CreateTaskParams, AddLogToTaskParams,
-    RequestHumanAssistanceParams, UpdateTaskStatusParams
+    RequestHumanAssistanceParams, UpdateTaskStatusParams, GetFilesParams, UploadedFile
 )
 
 logger = logging.getLogger(__name__)
@@ -392,7 +392,7 @@ class Agent:
                     'role': 'user' if msg.author == 'user' else 'assistant',
                     'content': msg.message,
                     'id': msg.id,
-                    'createdAt': msg.createdAt.isoformat()
+                    'created_at': msg.created_at.isoformat()
                 })
 
         try:
@@ -423,60 +423,59 @@ class Agent:
             'schema': tool.schema.model_json_schema()
         }
 
-    async def get_files(self, workspace_id: int) -> Dict[str, Any]:
+    async def get_files(self, params: GetFilesParams) -> List[UploadedFile]:
         """Get files in a workspace."""
-        response = await self._api_client.get(f"/workspaces/{workspace_id}/file")
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/files")
         return response["data"]
 
-    async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
-        """Upload a file to a workspace.
-        
-        Args:
-            params: UploadFileParams containing:
-                workspace_id: The ID of the workspace to upload to
-                path: The path/name for the file in the workspace
-                file: The file content as either bytes or string
-                task_ids: Optional task ID(s) to associate with the file
-                skip_summarizer: Optional flag to skip content summarization
-                content_type: Optional content type to override automatic detection
-                
-        Returns:
-            Dictionary containing the upload response with file ID
-        """
-        data = aiohttp.FormData()
-        data.add_field('path', params.path)
-        
-        # Handle task IDs
-        if params.task_ids is not None:
-            if isinstance(params.task_ids, list):
-                data.add_field('taskIds', json.dumps(params.task_ids))
-            else:
-                data.add_field('taskIds', json.dumps([params.task_ids]))
-        
-        # Handle skip summarizer flag
+    async def upload_file(self, params: UploadFileParams) -> UploadedFile:
+        """Upload a file to a workspace."""
+        # Create form data
+        form_data = aiohttp.FormData()
+        form_data.add_field('file', params.file, filename=params.path)
+        form_data.add_field('path', params.path)
+        if params.task_ids:
+            form_data.add_field('taskIds', json.dumps(params.task_ids))
         if params.skip_summarizer is not None:
-            data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
-        
-        # Handle file content
-        if isinstance(params.file, bytes):
-            # Use provided content type or detect from file extension
-            content_type = params.content_type or self._get_content_type(params.path)
-            data.add_field('file', params.file, filename=params.path, content_type=content_type)
-        else:
-            # String content is always text/plain
-            data.add_field('file', params.file.encode('utf-8'), filename=params.path, content_type='text/plain')
+            form_data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
 
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/file",
-            data=data
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/files",
+            data=form_data
         )
         return response["data"]
 
-    @staticmethod
-    def _get_content_type(filename: str) -> str:
-        """Get content type based on file extension."""
-        content_type, _ = mimetypes.guess_type(filename)
-        return content_type or 'application/octet-stream'
+    async def get_file_content(self, workspaceId: int, fileId: str) -> bytes:
+        """Get file content as bytes."""
+        response = await self.api_client.get(f"/workspaces/{workspaceId}/files/{fileId}/content")
+        return response["data"]
+
+    async def save_output_file(self, workspaceId: int, fileName: str, content: Union[str, bytes], taskId: Optional[int] = None) -> str:
+        """Save an output file and return its access URL."""
+        params = UploadFileParams(
+            workspaceId=workspaceId,
+            path=fileName,
+            file=content,
+            taskIds=[taskId] if taskId else None
+        )
+        result = self.upload_file(params)
+        return result.url
+
+    async def read_file_content(self, workspaceId: int, fileId: str, encoding: Optional[str] = None) -> Union[str, bytes]:
+        """Read content from an uploaded file.
+        
+        Args:
+            workspaceId: ID of the workspace containing the file
+            fileId: ID of the file to read
+            encoding: Optional encoding to use for text files (e.g., 'utf-8')
+        
+        Returns:
+            str if encoding is provided, bytes otherwise
+        """
+        content = self.get_file_content(workspaceId=workspaceId, fileId=fileId)
+        if encoding:
+            return content.decode(encoding)
+        return content
 
     async def get_tasks(self, workspace_id: Union[int, GetTasksParams]) -> Dict[str, Any]:
         """Gets a list of tasks in a workspace."""
@@ -548,7 +547,7 @@ class Agent:
             "description": params.description,
             "body": params.body,
             "input": params.input,
-            "expectedOutput": params.expected_output,
+            "expected_output": params.expected_output,
             "dependencies": params.dependencies
         })
         return response["data"]
@@ -568,14 +567,14 @@ class Agent:
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Update a task's status."""
         try:
-            response = await self._api_client.post(
+            await self._api_client.post(
                 f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
                 {"status": params.status}
             )
-            return response.get("data", {"status": params.status})
+            return {"status": "success"}
         except Exception as e:
             logger.error(f"Failed to update task status: {str(e)}")
-            return {"status": params.status}
+            return {"status": "error", "error": str(e)}
 
     async def call_integration(self, integration: IntegrationCallRequest) -> Dict[str, Any]:
         """
