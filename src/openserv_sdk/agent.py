@@ -455,9 +455,13 @@ class Agent:
         if params.skip_summarizer is not None:
             data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
         
-        # Convert string content to bytes if needed
-        file_content = params.file if isinstance(params.file, bytes) else params.file.encode()
-        data.add_field('file', file_content, filename=params.path)
+        # Handle file content
+        if isinstance(params.file, bytes):
+            # Binary content - use octet-stream
+            data.add_field('file', params.file, filename=params.path, content_type='application/octet-stream')
+        else:
+            # String content - use text/plain and encode as UTF-8
+            data.add_field('file', params.file.encode('utf-8'), filename=params.path, content_type='text/plain')
 
         response = await self._api_client.post(
             f"/workspaces/{params.workspace_id}/file",

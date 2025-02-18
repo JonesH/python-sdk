@@ -79,11 +79,16 @@ class BaseClient:
                 content = json.dumps(json_data, cls=DateTimeEncoder).encode('utf-8')
                 request_headers['Content-Type'] = 'application/json'
             elif form_data is not None:
+                # Set multipart form-data header
+                request_headers['Content-Type'] = 'multipart/form-data'
+                
                 # Convert aiohttp FormData to httpx files format
                 files = {}
                 for field_name, field_value in form_data._fields:
                     if isinstance(field_value[0], bytes):
-                        files[field_name] = (field_value[2], field_value[0], 'application/octet-stream')
+                        # Get content type from field value if available
+                        content_type = field_value[3].get('content-type', 'application/octet-stream') if len(field_value) > 3 else 'application/octet-stream'
+                        files[field_name] = (field_value[2], field_value[0], content_type)
                     else:
                         files[field_name] = (None, str(field_value[0]))
 
