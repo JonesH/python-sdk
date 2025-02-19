@@ -614,7 +614,7 @@ class Agent:
     async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
         """Mark a task as errored with the given error message."""
         try:
-            response = await self._api_client.post(f"/workspaces/{workspace_id}/task/{task_id}/error", {
+            response = await self._api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/error", {
                 "error": error
             })
 
@@ -694,10 +694,9 @@ class Agent:
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Update a task's status."""
         try:
-
-            response = await self._api_client.put(
+            response = await self._api_client.post(
                 f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
-                {"status": params.status}
+                {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
             )
             return response["data"]
 

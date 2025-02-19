@@ -214,7 +214,9 @@ class RuntimeClient(BaseClient):
         except Exception as e:
             logger.error(f"Failed to execute task: {str(e)}")
             if isinstance(e, httpx.HTTPStatusError):
-                logger.error(f"Response content: {e.response.content}")
+                error_content = e.response.content.decode('utf-8') if e.response.content else "No content"
+                logger.error(f"Response content: {error_content}")
+                raise APIError(f"Failed to execute task: {error_content}")
             raise APIError(f"Failed to execute task: {str(e)}")
         
     async def handle_chat(
