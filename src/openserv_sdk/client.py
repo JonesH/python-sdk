@@ -79,14 +79,10 @@ class BaseClient:
                 content = json.dumps(json_data, cls=DateTimeEncoder).encode('utf-8')
                 request_headers['Content-Type'] = 'application/json'
             elif form_data is not None:
-                # Set multipart form-data header
-                request_headers['Content-Type'] = 'multipart/form-data'
-                
                 # Convert aiohttp FormData to httpx files format
                 files = {}
                 for field_name, field_value in form_data._fields:
                     if isinstance(field_value[0], bytes):
-                        # Get content type from field value if available
                         content_type = field_value[3].get('content-type', 'application/octet-stream') if len(field_value) > 3 else 'application/octet-stream'
                         files[field_name] = (field_value[2], field_value[0], content_type)
                     else:
@@ -103,7 +99,6 @@ class BaseClient:
             
             logger.info("Response status: %d", response.status_code)
             logger.debug("Response headers: %s", response.headers)
-            logger.debug("Response content: %s", response.content)
             
             response.raise_for_status()
             
@@ -114,7 +109,8 @@ class BaseClient:
             elif 'text/html' in content_type or 'text/plain' in content_type:
                 return {'status': response.text}
             else:
-                return None
+                # For binary content, return raw bytes
+                return response.content
                 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -202,8 +198,8 @@ class RuntimeClient(BaseClient):
         """Execute a task."""
         url = f"{self.config.runtime_url}/runtime/execute"
         payload = {
-            'workspaceId': workspace_id,
-            'taskId': task_id,
+            'workspace_id': workspace_id,
+            'task_id': task_id,
             'tools': tools,
             'messages': messages,
             'action': action

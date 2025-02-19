@@ -357,7 +357,82 @@ class Agent:
             # Execute the task and let the runtime handle the response
             logger.info(f"Executing task {action.task.id}")
             tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
-            action_data = action.model_dump()
+            action_data = {
+                'type': action.type,
+                'me': {
+                    'id': action.me.id,
+                    'name': action.me.name,
+                    'kind': action.me.kind,
+                    'is_built_by_agent_builder': action.me.is_built_by_agent_builder,
+                    'system_prompt': action.me.system_prompt,
+                    'capabilities_description': action.me.capabilities_description
+                },
+                'task': {
+                    'id': action.task.id,
+                    'description': action.task.description,
+                    'body': action.task.body,
+                    'expected_output': action.task.expected_output,
+                    'input': action.task.input,
+                    'dependencies': [
+                        {
+                            'id': d.id,
+                            'description': d.description,
+                            'output': d.output,
+                            'status': d.status,
+                            'attachments': [
+                                {
+                                    'id': a.id,
+                                    'path': a.path,
+                                    'full_url': a.full_url,
+                                    'summary': a.summary
+                                } for a in d.attachments
+                            ]
+                        } for d in action.task.dependencies
+                    ],
+                    'human_assistance_requests': [
+                        {
+                            'id': r.id,
+                            'agent_dump': r.agent_dump,
+                            'human_response': r.human_response,
+                            'question': r.question,
+                            'status': r.status,
+                            'type': r.type
+                        } for r in action.task.human_assistance_requests
+                    ]
+                },
+                'workspace': {
+                    'id': action.workspace.id,
+                    'goal': action.workspace.goal,
+                    'bucket_folder': action.workspace.bucket_folder,
+                    'agents': [
+                        {
+                            'id': a.id,
+                            'name': a.name,
+                            'kind': a.kind,
+                            'capabilities_description': a.capabilities_description
+                        } for a in action.workspace.agents
+                    ]
+                },
+                'integrations': [
+                    {
+                        'id': i.id,
+                        'connection_id': i.connection_id,
+                        'provider_config_key': i.provider_config_key,
+                        'provider': i.provider,
+                        'created': i.created,
+                        'metadata': i.metadata,
+                        'scopes': i.scopes,
+                        'open_api': i.open_api
+                    } for i in action.integrations
+                ],
+                'memories': [
+                    {
+                        'id': m.id,
+                        'memory': m.memory,
+                        'created_at': m.created_at.isoformat()
+                    } for m in action.memories
+                ]
+            }
 
             logger.info(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
             logger.info(f"Messages: {json.dumps(messages, indent=2)}")
@@ -430,41 +505,66 @@ class Agent:
             logger.error("Chat response failed: %s", str(error), exc_info=True)
             # Don't re-raise the error to match TypeScript behavior
 
-    @staticmethod
     def _convert_tool_to_json_schema(tool: Capability[BaseModel]) -> Dict[str, Any]:
         """Convert a tool to JSON schema format."""
+        schema = tool.schema.model_json_schema()
+        # Remove title from properties if present
+        if "properties" in schema:
+            for prop in schema["properties"].values():
+                if isinstance(prop, dict):
+                    prop.pop("title", None)
+        
         return {
             'name': tool.name,
             'description': tool.description,
-            'schema': tool.schema.model_json_schema()
+            'parameters': schema
         }
 
-    async def get_files(self, params: GetFilesParams) -> List[UploadedFile]:
+    async def get_files(self, workspace_id: Union[int, GetFilesParams]) -> Dict[str, Any]:
         """Get files in a workspace."""
-        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/files")
+        if isinstance(workspace_id, GetFilesParams):
+            params = workspace_id
+        else:
+            params = GetFilesParams(workspace_id=workspace_id)
+
+        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/files")
         return response["data"]
 
-    async def upload_file(self, params: UploadFileParams) -> UploadedFile:
+    async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
         """Upload a file to a workspace."""
-        # Create form data
-        form_data = aiohttp.FormData()
-        form_data.add_field('file', params.file, filename=params.path)
-        form_data.add_field('path', params.path)
-        if params.task_ids:
-            form_data.add_field('taskIds', json.dumps(params.task_ids))
+        data = aiohttp.FormData()
+        data.add_field('path', params.path)
+        if params.task_ids is not None:
+            data.add_field('taskIds', json.dumps(params.task_ids))
         if params.skip_summarizer is not None:
-            form_data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
+            data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
+        
+        # Handle both string and bytes file content
+        content_type = params.content_type or (
+            mimetypes.guess_type(params.path)[0] or 'application/octet-stream'
+        )
+        
+        if isinstance(params.file, str):
+            data.add_field('file', params.file.encode(), 
+                          filename=params.path,
+                          content_type=content_type)
+        else:
+            data.add_field('file', params.file, 
+                          filename=params.path,
+                          content_type=content_type)
 
-        response = await self.api_client.post(
-            f"/workspaces/{params.workspace_id}/files",
-            data=form_data
+        response = await self._api_client.post(
+            f"/workspaces/{params.workspace_id}/file",
+            data=data
         )
         return response["data"]
 
     async def get_file_content(self, workspaceId: int, fileId: str) -> bytes:
         """Get file content as bytes."""
-        response = await self.api_client.get(f"/workspaces/{workspaceId}/files/{fileId}/content")
-        return response["data"]
+        response = await self.api_client.get(f"/workspaces/{workspaceId}/file/{fileId}/content")
+        if isinstance(response, dict) and "data" in response:
+            return response["data"]
+        return response
 
     async def save_output_file(self, workspaceId: int, fileName: str, content: Union[str, bytes], taskId: Optional[int] = None) -> str:
         """Save an output file and return its access URL."""
@@ -563,7 +663,7 @@ class Agent:
             "description": params.description,
             "body": params.body,
             "input": params.input,
-            "expected_output": params.expected_output,
+            "expectedOutput": params.expected_output,
             "dependencies": params.dependencies
         })
         return response["data"]
