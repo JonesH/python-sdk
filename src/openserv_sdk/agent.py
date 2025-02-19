@@ -361,85 +361,10 @@ class Agent:
             # Execute the task and let the runtime handle the response
             logger.info(f"Executing task {action.task.id}")
             
-            tools_json = [Agent._convert_tool_to_json_schema(t) for t in self._tools]
+            tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
 
-            action_data = {
-                'type': action.type,
-                'me': {
-                    'id': action.me.id,
-                    'name': action.me.name,
-                    'kind': action.me.kind,
-                    'is_built_by_agent_builder': action.me.is_built_by_agent_builder,
-                    'system_prompt': action.me.system_prompt,
-                    'capabilities_description': action.me.capabilities_description
-                },
-                'task': {
-                    'id': action.task.id,
-                    'description': action.task.description,
-                    'body': action.task.body,
-                    'expected_output': action.task.expected_output,
-                    'input': action.task.input,
-                    'dependencies': [
-                        {
-                            'id': d.id,
-                            'description': d.description,
-                            'output': d.output,
-                            'status': d.status,
-                            'attachments': [
-                                {
-                                    'id': a.id,
-                                    'path': a.path,
-                                    'full_url': a.full_url,
-                                    'summary': a.summary
-                                } for a in d.attachments
-                            ]
-                        } for d in action.task.dependencies
-                    ],
-                    'human_assistance_requests': [
-                        {
-                            'id': r.id,
-                            'agent_dump': r.agent_dump,
-                            'human_response': r.human_response,
-                            'question': r.question,
-                            'status': r.status,
-                            'type': r.type
-                        } for r in action.task.human_assistance_requests
-                    ]
-                },
-                'workspace': {
-                    'id': action.workspace.id,
-                    'goal': action.workspace.goal,
-                    'bucket_folder': action.workspace.bucket_folder,
-                    'agents': [
-                        {
-                            'id': a.id,
-                            'name': a.name,
-                            'kind': a.kind,
-                            'capabilities_description': a.capabilities_description
-                        } for a in action.workspace.agents
-                    ]
-                },
-                'integrations': [
-                    {
-                        'id': i.id,
-                        'connection_id': i.connection_id,
-                        'provider_config_key': i.provider_config_key,
-                        'provider': i.provider,
-                        'created': i.created,
-                        'metadata': i.metadata,
-                        'scopes': i.scopes,
-                        'open_api': i.open_api
-                    } for i in action.integrations
-                ],
-                'memories': [
-                    {
-                        'id': m.id,
-                        'memory': m.memory,
-                        'created_at': m.created_at.isoformat()
-                    } for m in action.memories
-                ]
-            }
-
+            action_data = action.model_dump()
+            
             logger.info(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
             logger.info(f"Messages: {json.dumps(messages, indent=2)}")
             logger.info(f"Action data: {json.dumps(action_data, indent=2)}")
@@ -487,15 +412,14 @@ class Agent:
             for msg in action.messages:
                 messages.append({
                     'role': 'user' if msg.author == 'user' else 'assistant',
-                    'content': msg.message,
-                    'id': msg.id,
-                    'created_at': msg.created_at.isoformat()
+                    'content': msg.message
+                    # Remove id and created_at - they're not expected by the API
                 })
 
         try:
             # Get the chat response
             response = await self._runtime_client.handle_chat(
-                tools=[Agent._convert_tool_to_json_schema(t) for t in self._tools],
+                tools=[self._convert_tool_to_json_schema(t) for t in self._tools],
                 messages=messages,
                 action=action.model_dump()
             )
@@ -511,20 +435,29 @@ class Agent:
             logger.error("Chat response failed: %s", str(error), exc_info=True)
             # Don't re-raise the error to match TypeScript behavior
 
+    @staticmethod
     def _convert_tool_to_json_schema(tool: Capability[BaseModel]) -> Dict[str, Any]:
         """Convert a tool to JSON schema format."""
-        schema = tool.schema.model_json_schema()
-        # Remove title from properties if present
-        if "properties" in schema:
-            for prop in schema["properties"].values():
-                if isinstance(prop, dict):
-                    prop.pop("title", None)
-        
         return {
             'name': tool.name,
             'description': tool.description,
-            'parameters': schema
+            'parameters': tool.schema.model_json_schema()
         }
+
+    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert tools to OpenAI format."""
+        openai_tools = []
+        for tool in tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
 
     async def get_files(self, workspace_id: Union[int, GetFilesParams]) -> Dict[str, Any]:
         """Get files in a workspace."""
@@ -615,11 +548,10 @@ class Agent:
         """Mark a task as errored with the given error message."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{workspace_id}/task/{task_id}/error",
+                f"/workspaces/{workspace_id}/tasks/{task_id}/error",
                 {"error": error}
             )
             return response
-
         except Exception as e:
             logger.error(f"Failed to mark task as errored: {str(e)}")
             return {"status": "error", "error": str(e)}
@@ -627,7 +559,7 @@ class Agent:
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
         response = await self._api_client.post(
-            f"/workspaces/{workspace_id}/task/{task_id}/complete",
+            f"/workspaces/{workspace_id}/tasks/{task_id}/complete",
             {"output": output}
         )
         return response["data"]
@@ -695,11 +627,10 @@ class Agent:
         """Update a task's status."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
+                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
                 {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
             )
             return response["data"]
-
         except Exception as e:
             logger.error(f"Failed to update task status: {str(e)}")
             return {"status": "error", "error": str(e)}
@@ -714,24 +645,3 @@ class Agent:
             integration.details.model_dump()
         )
         return response["data"]
-
-    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert tools to OpenAI format."""
-        openai_tools = []
-        for tool in tools:
-            # Create a copy of the parameters to avoid modifying the original
-            parameters = tool["parameters"].copy()
-            # Remove title field if present
-            if "title" in parameters:
-                del parameters["title"]
-            
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": parameters
-                }
-            }
-            openai_tools.append(openai_tool)
-        return openai_tools
