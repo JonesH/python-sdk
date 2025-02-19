@@ -614,10 +614,10 @@ class Agent:
     async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
         """Mark a task as errored with the given error message."""
         try:
-            response = await self._api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/error", {
-                "error": error
-            })
-
+            response = await self._api_client.post(
+                f"/workspaces/{workspace_id}/task/{task_id}/error",
+                {"error": error}
+            )
             return response
 
         except Exception as e:
@@ -626,8 +626,8 @@ class Agent:
 
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
-        response = await self._api_client.put(
-            f"/workspaces/{workspace_id}/tasks/{task_id}/complete",
+        response = await self._api_client.post(
+            f"/workspaces/{workspace_id}/task/{task_id}/complete",
             {"output": output}
         )
         return response["data"]
@@ -695,7 +695,7 @@ class Agent:
         """Update a task's status."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
+                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
                 {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
             )
             return response["data"]
@@ -719,12 +719,18 @@ class Agent:
         """Convert tools to OpenAI format."""
         openai_tools = []
         for tool in tools:
+            # Create a copy of the parameters to avoid modifying the original
+            parameters = tool["parameters"].copy()
+            # Remove title field if present
+            if "title" in parameters:
+                del parameters["title"]
+            
             openai_tool = {
                 "type": "function",
                 "function": {
                     "name": tool["name"],
                     "description": tool["description"],
-                    "parameters": tool["parameters"]
+                    "parameters": parameters
                 }
             }
             openai_tools.append(openai_tool)
