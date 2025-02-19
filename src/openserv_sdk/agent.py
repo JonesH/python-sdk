@@ -612,23 +612,24 @@ class Agent:
         return response["data"]
 
     async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
-        """Mark a task as errored."""
+        """Mark a task as errored with the given error message."""
         try:
             response = await self._api_client.post(f"/workspaces/{workspace_id}/task/{task_id}/error", {
                 "error": error
             })
-            if isinstance(response, bytes):
-                return {"status": "error", "error": error}
-            return response.get("data", {"status": "error", "error": error})
+
+            return response
+
         except Exception as e:
             logger.error(f"Failed to mark task as errored: {str(e)}")
-            return {"status": "error", "error": error}
+            return {"status": "error", "error": str(e)}
 
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
-        response = await self._api_client.post(f"/workspaces/{workspace_id}/tasks/{task_id}/complete", {
-            "output": output
-        })
+        response = await self._api_client.put(
+            f"/workspaces/{workspace_id}/tasks/{task_id}/complete",
+            {"output": output}
+        )
         return response["data"]
 
     async def send_chat_message(self, workspace_id: int, agent_id: int, message: str) -> Dict[str, Any]:
@@ -639,7 +640,7 @@ class Agent:
             message=message
         )
         response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/agents/{params.agent_id}/chat",
+            f"/workspaces/{params.workspace_id}/agent-chat/{params.agent_id}/message",
             {"message": params.message}
         )
         return response["data"]
@@ -693,11 +694,13 @@ class Agent:
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Update a task's status."""
         try:
-            response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
+
+            response = await self._api_client.put(
+                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
                 {"status": params.status}
             )
-            return response.get("data", {"status": "success"})
+            return response["data"]
+
         except Exception as e:
             logger.error(f"Failed to update task status: {str(e)}")
             return {"status": "error", "error": str(e)}
