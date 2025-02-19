@@ -201,13 +201,23 @@ class RuntimeClient(BaseClient):
     ) -> Dict[str, Any]:
         """Execute a task."""
         url = f"{self.config.runtime_url}/runtime/execute"
-        return await self._request('POST', url, json_data={
+        payload = {
             'workspaceId': workspace_id,
             'taskId': task_id,
             'tools': tools,
             'messages': messages,
             'action': action
-        })
+        }
+        logger.info(f"Executing task with payload: {json.dumps(payload, indent=2)}")
+        try:
+            response = await self._request('POST', url, json_data=payload)
+            logger.info(f"Task execution response: {json.dumps(response, indent=2) if response else 'None'}")
+            return response or {}
+        except Exception as e:
+            logger.error(f"Failed to execute task: {str(e)}")
+            if isinstance(e, httpx.HTTPStatusError):
+                logger.error(f"Response content: {e.response.content}")
+            raise APIError(f"Failed to execute task: {str(e)}")
         
     async def handle_chat(
         self,

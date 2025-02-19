@@ -330,6 +330,7 @@ class Agent:
         """Handle a task execution request."""
         logger.info(f"Processing task: {action.task}")
         logger.info(f"Task ID: {action.task.id}")
+        logger.info(f"Workspace ID: {action.workspace.id}")
 
         messages = [
             {'role': 'system', 'content': self.config.system_prompt}
@@ -352,17 +353,32 @@ class Agent:
                 ))
             except Exception as status_error:
                 logger.warning(f"Failed to update task status: {str(status_error)}")
-                # Continue execution even if status update fails
 
             # Execute the task and let the runtime handle the response
             logger.info(f"Executing task {action.task.id}")
-            await self._runtime_client.execute_task(
-                workspace_id=action.workspace.id,
-                task_id=action.task.id,
-                tools=[self._convert_tool_to_json_schema(t) for t in self._tools],
-                messages=messages,
-                action=action.model_dump()
-            )
+            tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
+            action_data = action.model_dump()
+
+            logger.info(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
+            logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+            logger.info(f"Action data: {json.dumps(action_data, indent=2)}")
+
+            try:
+                await self._runtime_client.execute_task(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    tools=tools_json,
+                    messages=messages,
+                    action=action_data
+                )
+            except Exception as exec_error:
+                logger.error(f"Task execution failed: {str(exec_error)}")
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(exec_error)
+                )
+                raise
 
         except Exception as error:
             logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
