@@ -325,6 +325,76 @@ class Agent:
         await self.server.stop()
 
     async def do_task(self, action: DoTaskAction) -> None:
+        """Handle a task execution request."""
+        logger.info(f"Processing task: {action.task}")
+        logger.info(f"Task ID: {action.task.id}")
+        logger.info(f"Workspace ID: {action.workspace.id}")
+
+        messages = [
+            {'role': 'system', 'content': self.config.system_prompt}
+        ]
+
+        if action.task.description:
+            messages.append({
+                'role': 'user',
+                'content': action.task.description
+            })
+
+        try:
+            # Update status to in-progress
+            try:
+                logger.info(f"Setting task {action.task.id} status to IN_PROGRESS")
+                await self.update_task_status(UpdateTaskStatusParams(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    status=TaskStatus.IN_PROGRESS
+                ))
+            except Exception as status_error:
+                logger.warning(f"Failed to update task status: {str(status_error)}")
+
+            # Execute the task and let the runtime handle the response
+            logger.info(f"Executing task {action.task.id}")
+            
+            tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
+
+            action_data = action.model_dump()
+            
+            logger.info(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
+            logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+            logger.info(f"Action data: {json.dumps(action_data, indent=2)}")
+
+            try:
+                await self._runtime_client.execute_task(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    tools=tools_json,
+                    messages=messages,
+                    action=action_data
+                )
+            except Exception as exec_error:
+                logger.error(f"Task execution failed: {str(exec_error)}")
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(exec_error)
+                )
+                raise
+
+        except Exception as error:
+            logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
+            logger.error(f"Stack trace: {traceback.format_exc()}")
+
+            try:
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(error)
+                )
+            except Exception as mark_error:
+                logger.error(f"Failed to mark task as errored: {str(mark_error)}")
+            
+            self.handle_error(error, {"context": "task_execution"})
+            raise
         """Execute a task."""
         try:
             result = await self.process({
@@ -378,6 +448,21 @@ class Agent:
                 agent_id=action.agentId,
                 message=f"Error: {str(e)}"
             )
+
+    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert tools to OpenAI format."""
+        openai_tools = []
+        for tool in tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
 
     async def get_files(self, workspace_id: Union[int, GetFilesParams]) -> Dict[str, Any]:
         """Get files in a workspace."""
