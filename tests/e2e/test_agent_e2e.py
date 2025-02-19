@@ -74,9 +74,17 @@ async def test_task_operations():
         api_key="test-key"
     ))
 
-    # Mock API client responses
+    # Mock API client responses with side effects
     agent._api_client.get = AsyncMock(return_value={"data": []})
-    agent._api_client.post = AsyncMock(return_value={"data": {"id": 1}})
+    
+    # Create different responses for different POST calls
+    post_responses = [
+        {"data": {"id": 1}},  # For task creation
+        {"data": {"status": "success"}}  # For status update
+    ]
+    post_mock = AsyncMock(side_effect=post_responses)
+    agent._api_client.post = post_mock
+    
     agent._api_client.put = AsyncMock(return_value={"data": {"status": "success"}})
 
     # Test task listing

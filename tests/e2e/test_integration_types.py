@@ -198,6 +198,7 @@ async def test_task_execution_workflow(test_agent):
     """Test task execution workflow."""
     # Mock runtime client response
     test_agent.runtime_client.execute_task.return_value = {"data": {"status": "success"}}
+    test_agent.api_client.post.return_value = {"data": {"status": "success"}}
     
     # Create task action
     task_action = DoTaskAction(
@@ -227,7 +228,7 @@ async def test_task_execution_workflow(test_agent):
         memories=[]
     )
 
-    # Execute task
+    # Execute task and await all responses
     await test_agent.do_task(task_action)
     
     # Verify runtime client call
@@ -235,6 +236,9 @@ async def test_task_execution_workflow(test_agent):
     call_args = test_agent.runtime_client.execute_task.call_args
     assert call_args[1]["workspace_id"] == 1
     assert call_args[1]["task_id"] == 1
+    
+    # Verify status update was called
+    test_agent.api_client.post.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_human_assistance_workflow(test_agent):
