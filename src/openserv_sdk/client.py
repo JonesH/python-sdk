@@ -197,26 +197,38 @@ class RuntimeClient(BaseClient):
     ) -> Dict[str, Any]:
         """Execute a task."""
         url = f"{self.config.runtime_url}/runtime/execute"
+
+        # Convert tools to OpenAI function format
+        formatted_tools = []
+        for tool in tools:
+            formatted_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            formatted_tools.append(formatted_tool)
+
         payload = {
             'workspaceId': workspace_id,
             'taskId': task_id,
-            'tools': tools,
+            'tools': formatted_tools,
             'messages': messages,
             'action': action
         }
+
         logger.info(f"Executing task with payload: {json.dumps(payload, indent=2)}")
         try:
             response = await self._request('POST', url, json_data=payload)
             if isinstance(response, bytes):
-                return {"status": "success"}
-            logger.info(f"Task execution response: {json.dumps(response, indent=2) if response else 'None'}")
-            return response or {}
+                response = response.decode('utf-8')
+            return response if response else {}
         except Exception as e:
             logger.error(f"Failed to execute task: {str(e)}")
             if isinstance(e, httpx.HTTPStatusError):
-                error_content = e.response.content.decode('utf-8') if e.response.content else "No content"
-                logger.error(f"Response content: {error_content}")
-                raise APIError(f"Failed to execute task: {error_content}")
+                logger.error(f"Response content: {e.response.content}")
             raise APIError(f"Failed to execute task: {str(e)}")
         
     async def handle_chat(
@@ -227,8 +239,31 @@ class RuntimeClient(BaseClient):
     ) -> Dict[str, Any]:
         """Handle a chat message."""
         url = f"{self.config.runtime_url}/runtime/chat"
-        return await self._request('POST', url, json_data={
+
+        # Add required fields to action if not present
+        if isinstance(action, dict):
+            if 'workspaceId' not in action and 'workspace' in action:
+                action['workspaceId'] = action['workspace'].get('id')
+            if 'taskId' not in action and 'task' in action:
+                action['taskId'] = action['task'].get('id')
+
+        payload = {
+            'workspaceId': action.get('workspaceId'),
+            'taskId': action.get('taskId'),
             'tools': tools,
             'messages': messages,
             'action': action
-        }) 
+        }
+
+        # Log the exact payload being sent
+        logger.info(f"Sending chat request with payload: {json.dumps(payload, indent=2)}")
+
+        try:
+            response = await self._request('POST', url, json_data=payload)
+            logger.info(f"Chat response: {json.dumps(response, indent=2) if response else 'None'}")
+            return response
+        except Exception as e:
+            logger.error(f"Chat request failed with error: {str(e)}")
+            if isinstance(e, httpx.HTTPStatusError):
+                logger.error(f"Response content: {e.response.content}")
+            raise 
