@@ -53,10 +53,6 @@ def mock_openai():
 class TestAgent(Agent):
     """Test class that exposes protected/private members for testing."""
     @property
-    def test_server(self):
-        return self.server
-    
-    @property
     def test_port(self):
         return self.config.port
 
@@ -68,7 +64,7 @@ class TestAgent(Agent):
         """Get test configuration."""
         return {
             "port": self.test_port,
-            "server": self.test_server
+            "server": self.server
         }
 
 def test_agent_initialization():
