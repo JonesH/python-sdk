@@ -273,22 +273,27 @@ class Agent:
             })
             raise ToolError(tool_name=tool_call.function.name, message=error_message)
 
-    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> str:
-        """Handle a tool execution request from the HTTP server."""
-        tool = next((t for t in self._tools if t.name == tool_name), None)
-        if not tool:
-            raise ToolError(tool_name=tool_name, message=f"Tool '{tool_name}' not found")
-
+    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle a tool route."""
         try:
-            result = await tool.run(body, body.get("messages", []))
-            return str(result)
+            if not hasattr(self, tool_name) or not callable(getattr(self, tool_name)):
+                raise ToolError(f"Tool not found: {tool_name}")
+            
+            # Extract arguments from the request body
+            args = body.get("args", {})
+            messages = body.get("messages", [])
+            
+            # Call the tool method with the arguments
+            result = await getattr(self, tool_name)(**args)
+            return {"result": result}
         except Exception as e:
             self.handle_error(e, {
                 "tool_name": tool_name,
-                "body": body,
-                "context": "tool_route"
+                "body": body
             })
-            raise
+            if isinstance(e, ToolError):
+                raise e
+            raise ToolError(f"Error in tool '{tool_name}': {str(e)}")
 
     async def handle_root_route(self, body: Dict[str, Any]) -> None:
         """Handle a request to the root route."""
@@ -417,15 +422,15 @@ class Agent:
       
         """Respond to a chat message."""
         try:
-            result = await self.process({
-                "messages": action.messages,
-                "action": action
-            })
+            result = await self.process(ProcessParams(
+                messages=[{"content": msg.message} for msg in action.messages],
+                action=action
+            ))
             
             if isinstance(result, dict) and "result" in result:
                 await self.api_client.send_chat_message(
-                    workspace_id=action.workspaceId,
-                    agent_id=action.agentId,
+                    workspace_id=action.workspace.id,
+                    agent_id=action.me.id,
                     message=result["result"]
                 )
             else:
@@ -437,25 +442,10 @@ class Agent:
             })
             # Send error message to chat
             await self.api_client.send_chat_message(
-                workspace_id=action.workspaceId,
-                agent_id=action.agentId,
+                workspace_id=action.workspace.id,
+                agent_id=action.me.id,
                 message=f"Error: {str(e)}"
             )
-
-    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert tools to OpenAI format."""
-        openai_tools = []
-        for tool in tools:
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["parameters"]
-                }
-            }
-            openai_tools.append(openai_tool)
-        return openai_tools
 
     def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert tools to OpenAI format."""
@@ -561,7 +551,7 @@ class Agent:
         """Mark a task as errored with the given error message."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{workspace_id}/tasks/{task_id}/error",
+                f"/workspaces/{workspace_id}/task/{task_id}/error",
                 {"error": error}
             )
             return response
@@ -572,7 +562,7 @@ class Agent:
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
         response = await self._api_client.post(
-            f"/workspaces/{workspace_id}/tasks/{task_id}/complete",
+            f"/workspaces/{workspace_id}/task/{task_id}/complete",
             {"output": output}
         )
         return response["data"]
@@ -593,7 +583,7 @@ class Agent:
     async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
         """Requests human assistance for a task."""
         response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/human-assistance",
+            f"/workspaces/{params.workspace_id}/task/{params.task_id}/human-assistance",
             {
                 "type": params.type,
                 "question": params.question,
@@ -604,7 +594,7 @@ class Agent:
 
     async def get_task_detail(self, params: GetTaskDetailParams) -> Dict[str, Any]:
         """Gets detailed information about a specific task."""
-        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/detail")
+        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/task/{params.task_id}/detail")
         return response["data"]
 
     async def get_agents(self, params: GetAgentsParams) -> Dict[str, Any]:
@@ -627,7 +617,7 @@ class Agent:
     async def add_log_to_task(self, params: AddLogToTaskParams) -> Dict[str, Any]:
         """Adds a log entry to a task."""
         response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/log",
+            f"/workspaces/{params.workspace_id}/task/{params.task_id}/log",
             {
                 "severity": params.severity,
                 "type": params.type,
@@ -640,7 +630,7 @@ class Agent:
         """Update a task's status."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
+                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
                 {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
             )
             return response["data"]
