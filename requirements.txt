@@ -7,13 +7,13 @@ uvicorn>=0.24.0
 httpx>=0.25.0
 python-dotenv>=1.0.0
 
-# Test dependencies (optional)
-pytest>=7.0.0; extra == "test"
-pytest-asyncio>=0.21.0; extra == "test"
-pytest-cov>=4.0.0; extra == "test"
+# Test dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
 
 # Development dependencies
-black>=23.9.1,<24.0.0
-isort>=5.12.0,<6.0.0
-mypy>=1.5.1,<2.0.0
-pre-commit>=3.4.0,<4.0.0 
+black>=23.9.1
+isort>=5.12.0
+mypy>=1.5.1
+pre-commit>=3.4.0 
