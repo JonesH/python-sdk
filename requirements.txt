@@ -1,16 +1,18 @@
 # Core dependencies
-fastapi>=0.104.0,<1.0.0
-uvicorn>=0.24.0,<1.0.0
-openai>=1.3.0,<2.0.0
-pydantic>=2.4.2,<3.0.0
-httpx>=0.25.0,<1.0.0
-python-dotenv>=1.0.0,<2.0.0
-aiohttp>=3.9.0,<4.0.0
+pydantic>=2.0.0
+openai>=1.0.0
+aiohttp>=3.8.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
+python-dotenv>=1.0.0
+
+# Test dependencies (optional)
+pytest>=7.0.0; extra == "test"
+pytest-asyncio>=0.21.0; extra == "test"
+pytest-cov>=4.0.0; extra == "test"
 
 # Development dependencies
-pytest>=7.4.0,<8.0.0
-pytest-asyncio>=0.21.0,<1.0.0
-pytest-cov>=4.1.0,<5.0.0
 black>=23.9.1,<24.0.0
 isort>=5.12.0,<6.0.0
 mypy>=1.5.1,<2.0.0
