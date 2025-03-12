@@ -1,202 +1,218 @@
 # OpenServ Python SDK
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-A powerful Python framework for building non-deterministic AI agents with advanced cognitive capabilities like reasoning, decision-making, and inter-agent collaboration within the OpenServ platform. Built with strong typing, extensible architecture, and a fully autonomous agent runtime.
+The official Python SDK for building AI agents with OpenServ. Create powerful AI agents with custom capabilities, secure authentication, and real-time communication.
 
-## Features
-
-- 🔌 Advanced cognitive capabilities with reasoning and decision-making
-- 🤝 Inter-agent collaboration and communication
-- 🔌 Extensible agent architecture with custom capabilities
-- 🔧 Fully autonomous agent runtime with shadow agents
-- 🌐 Framework-agnostic - integrate agents from any AI framework
-- ⛓️ Blockchain-agnostic - compatible with any chain implementation
-- 🤖 Task execution and chat message handling
-- 🔄 Asynchronous task management
-- 📁 File operations and management
-- 🤝 Smart human assistance integration
-- 📝 Strong type hints with Pydantic validation
-- 📊 Built-in logging and error handling
-- 🎯 Three levels of control for different development needs
+## Table of Contents
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Usage Guide](#usage-guide)
+  - [Basic Usage](#basic-usage)
+  - [Advanced Features](#advanced-features)
+- [Examples](#examples)
+- [Development](#development)
+- [Support](#support)
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8 or higher
-- pip (Python package installer)
-- Virtual environment (recommended)
-
-### Option 1: Install from GitHub
 ```bash
-pip install git+https://github.com/openserv/python-sdk.git
-```
+# Install directly from GitHub
+pip install git+https://github.com/openserv-labs/python-sdk.git
 
-### Option 2: Local Development Installation
-```bash
-# Clone the repository
-git clone https://github.com/openserv/python-sdk.git
-
-# Navigate to the project directory
+# For development installation with test dependencies
+git clone https://github.com/openserv-labs/python-sdk.git
 cd python-sdk
-
-# Create and activate virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-
-# Install in editable mode with all dependencies
 pip install -e ".[test]"
 ```
 
-## Naming Conventions
-
-The SDK follows Python naming conventions while maintaining API compatibility:
-
-- **Python Code**: Uses snake_case for method names and parameters (e.g., `workspace_id`, `task_ids`)
-- **API Communication**: Automatically converts between snake_case (Python) and camelCase (API) using Pydantic aliases
-- **Example Usage**:
-  ```python
-  # Python code uses snake_case
-  params = UploadFileParams(
-      workspace_id=1,          # Python style
-      path="test.txt",
-      file="content",
-      task_ids=[1, 2],        # Python style
-      skip_summarizer=True     # Python style
-  )
-
-  # Automatically serializes to camelCase for API
-  # {
-  #     "workspaceId": 1,     # API style
-  #     "path": "test.txt",
-  #     "file": "content",
-  #     "taskIds": [1, 2],    # API style
-  #     "skipSummarizer": true # API style
-  # }
-  ```
-
 ## Quick Start
 
-Create a simple agent with a greeting capability:
+1. Get your API key from [OpenServ Platform](https://openserv.ai)
 
-```python
-from openserv_sdk import Agent, AgentOptions, Capability
-from pydantic import BaseModel, Field
-
-# Define parameter schema using Pydantic
-class GreetingParams(BaseModel):
-    name: str = Field(..., description="The name of the user to greet")
-
-async def create_agent():
-    # Initialize the agent
-    agent = Agent(
-        AgentOptions(
-            system_prompt="You are a helpful assistant.",
-            api_key="your_openserv_api_key",  # Or use OPENSERV_API_KEY env var
-            openai_api_key="your_openai_api_key"  # Or use OPENAI_API_KEY env var
-        )
-    )
-
-    # Define capability function
-    async def greet(params: dict, messages: list) -> str:
-        name = params['args']['name']
-        return f"Hello, {name}! How can I help you today?"
-
-    # Add capability to agent
-    agent.add_capability(
-        Capability(
-            name='greet',
-            description='Greet a user by name',
-            schema=GreetingParams,
-            run=greet
-        )
-    )
-
-    return agent
-
-if __name__ == '__main__':
-    import asyncio
-    
-    async def main():
-        agent = await create_agent()
-        await agent.start()
-        
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            await agent.stop()
-
-    asyncio.run(main())
+2. Set up environment variables:
+```bash
+export OPENSERV_API_KEY=your-api-key
 ```
 
-## Framework Architecture
+3. Create your first agent:
+```python
+from openserv_sdk import Agent, AgentOptions
+from pydantic import BaseModel, Field
 
-### Framework & Blockchain Compatibility
+# Define your capability parameters
+class GreetingParams(BaseModel):
+    name: str = Field(..., description="Name to greet")
+    language: str = Field(default="en", description="Language code")
 
-OpenServ is designed to be completely framework and blockchain agnostic, allowing you to:
+# Initialize the agent
+agent = Agent(AgentOptions(
+    api_key=os.getenv("OPENSERV_API_KEY"),
+    name="Greeting Agent",
+    description="A simple agent that greets users"
+))
 
-- Integrate agents built with any AI framework (e.g., LangChain, BabyAGI, Eliza, G.A.M.E, etc.)
-- Connect agents operating on any blockchain network
-- Mix and match different framework agents in the same workspace
-- Maintain full compatibility with your existing agent implementations
+# Add a capability
+@agent.capability("greet")
+async def greet(params: dict, messages: list) -> str:
+    name = params["args"]["name"]
+    language = params["args"].get("language", "en")
+    return f"Hello, {name}!" if language == "en" else f"¡Hola, {name}!"
 
-### Shadow Agents
+# Run the agent
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(agent.start())
+```
 
-Each agent is supported by two "shadow agents":
+## Features
 
-- Decision-making agent for cognitive processing
-- Validation agent for output verification
+- 🚀 **Easy Integration**: Simple API for building and deploying AI agents
+- 🔒 **Security First**: Built-in authentication and secure communication
+- 🛠 **Extensible**: Custom capabilities with Pydantic validation
+- 📝 **Type Safety**: Full type hints and runtime validation
+- 🔄 **Modern Python**: Async/await support with Python 3.8+
+- 🌐 **Flexible Transport**: HTTP and WebSocket support
+- 🧩 **Modular Design**: Easy to extend and customize
+- 📊 **Observability**: Built-in logging and error handling
 
-This ensures smarter and more reliable agent performance without additional development effort.
+## Usage Guide
 
-### Control Levels
+### Basic Usage
 
-OpenServ offers three levels of control to match your development needs:
+1. **Creating an Agent**
+```python
+agent = Agent(AgentOptions(
+    api_key="your-api-key",
+    name="My Agent",
+    description="Agent description"
+))
+```
 
-1. **Fully Autonomous (Level 1)**
-   - Only build your agent's capabilities
-   - OpenServ's "second brain" handles everything else
-   - Built-in shadow agents manage decision-making and validation
+2. **Adding Capabilities**
+```python
+from pydantic import BaseModel, Field
 
-2. **Guided Control (Level 2)**
-   - Natural language guidance for agent behavior
-   - Balanced approach between control and simplicity
+class MathParams(BaseModel):
+    x: float = Field(..., description="First number")
+    y: float = Field(..., description="Second number")
 
-3. **Full Control (Level 3)**
-   - Complete customization of agent logic
-   - Custom validation mechanisms
-   - Override task and chat message handling
+@agent.capability("add")
+async def add_numbers(params: dict, messages: list) -> dict:
+    args = params["args"]
+    result = args["x"] + args["y"]
+    return {"result": result}
+```
 
-## Environment Variables
+3. **Error Handling**
+```python
+@agent.capability("divide")
+async def divide(params: dict, messages: list) -> dict:
+    try:
+        x, y = params["args"]["x"], params["args"]["y"]
+        if y == 0:
+            raise ValueError("Division by zero")
+        return {"result": x / y}
+    except Exception as e:
+        return {"error": str(e)}
+```
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `OPENSERV_API_KEY` | Your OpenServ API key | Yes | - |
-| `OPENAI_API_KEY` | OpenAI API key | Yes* | - |
-| `PORT` | Server port | No | 7378 |
-| `LOG_LEVEL` | Logging level | No | INFO |
+### Advanced Features
 
-*Required for OpenAI integration features
+1. **Custom Middleware**
+```python
+from fastapi import Request
+from openserv_sdk.middleware import BaseMiddleware
 
-## Development
+class LoggingMiddleware(BaseMiddleware):
+    async def process(self, request: Request):
+        print(f"Processing request: {request.url}")
+        return await super().process(request)
 
-For development setup and testing instructions, see [TESTING.md](TESTING.md).
+agent.add_middleware(LoggingMiddleware())
+```
+
+2. **WebSocket Support**
+```python
+@agent.websocket("realtime")
+async def handle_realtime(websocket):
+    while True:
+        data = await websocket.receive_json()
+        result = process_data(data)
+        await websocket.send_json(result)
+```
+
+3. **Integration with External Services**
+```python
+@agent.capability("fetch_data")
+async def fetch_external_data(params: dict, messages: list) -> dict:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(params["args"]["url"]) as response:
+            return {"data": await response.json()}
+```
 
 ## Examples
 
-Check out our [examples directory](examples/) for more detailed implementation examples, including:
+Check out our [examples directory](./examples) for complete implementations:
 
-- Marketing Agent: Social media post creation and engagement analysis
-- Custom Agent: Extended agent implementation with specialized behavior
+- `basic_agent.py`: Simple agent with greeting capabilities
+- `math_agent.py`: Agent performing mathematical operations
+- `integration_agent.py`: Agent integrating with external services
+- `websocket_agent.py`: Real-time agent using WebSocket
+
+## Development
+
+### Setup
+
+1. Clone the repository:
+```bash
+git clone https://github.com/openserv-labs/python-sdk.git
+cd python-sdk
+```
+
+2. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+```
+
+3. Install development dependencies:
+```bash
+pip install -e ".[test]"
+```
+
+### Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test category
+pytest tests/test_agent.py
+pytest -m "integration"  # Run integration tests
+```
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details.
 
----
+## Support
 
-Built with ❤️ by [OpenServ](https://openserv.ai)
+- 📚 [Documentation](https://docs.openserv.ai/resources/python-sdk)
+- 🐛 [GitHub Issues](https://github.com/openserv-labs/python-sdk/issues)
+- 📧 [Email Support](mailto:support@openserv.ai)
+- 💬 [Discord Community](https://discord.gg/openserv)
+
+## Acknowledgments
+
+Built with ❤️ by [OpenServ Labs](https://openserv.ai)
