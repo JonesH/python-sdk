@@ -16,11 +16,15 @@ class AgentKind(str, Enum):
     OPENSERV = 'openserv'
 
 class TaskStatus(str, Enum):
+    TODO = "to-do"
+    IN_PROGRESS = "in-progress"
+    HUMAN_ASSISTANCE_REQUIRED = "human-assistance-required"
+    ERROR = "error"
+    DONE = "done"
+    CANCELLED = "cancelled"
+    # Keep the original values for backward compatibility
     PENDING = "PENDING"
-    IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
-    ERROR = "ERROR"
-    CANCELLED = "CANCELLED"
 
 class AgentBase(BaseModel):
     id: int
@@ -159,87 +163,28 @@ class ProcessParams(BaseModel):
         pass
 
 class AgentOptions(BaseModel):
-    """Configuration options for creating a new Agent instance."""
-    api_key: Optional[str] = Field(
-        None,
-        description="The OpenServ API key for authentication. Can also be provided via OPENSERV_API_KEY environment variable."
-    )
-    openai_api_key: Optional[str] = Field(
-        None,
-        description="The OpenAI API key for chat completions. Can also be provided via OPENAI_API_KEY environment variable."
-    )
-    system_prompt: str = Field(
-        ...,
-        description="The system prompt that defines the agent's behavior and context."
-    )
-    port: Optional[int] = Field(
-        7378,
-        description="The port number for the agent's HTTP server."
-    )
-    host: Optional[str] = Field(
-        "0.0.0.0",
-        description="The host address for the agent's HTTP server."
-    )
-    model: Optional[str] = Field(
-        "gpt-4",
-        description="The OpenAI model to use for chat completions."
-    )
-    log_level: Optional[str] = Field(
-        "info",
-        description="The logging level for the agent."
-    )
-    reload: Optional[bool] = Field(
-        False,
-        description="Whether to enable auto-reload for development."
-    )
-    debug: Optional[bool] = Field(
-        False,
-        description="Whether to enable debug mode."
-    )
-    version: Optional[str] = Field(
-        "1.0.0",
-        description="The version of the agent."
-    )
-    require_https: Optional[bool] = Field(
-        False,
-        description="Whether to require HTTPS connections."
-    )
-    trusted_hosts: Optional[List[str]] = Field(
-        None,
-        description="List of trusted host patterns."
-    )
-    ssl_keyfile: Optional[str] = Field(
-        None,
-        description="Path to SSL key file."
-    )
-    ssl_certfile: Optional[str] = Field(
-        None,
-        description="Path to SSL certificate file."
-    )
-    ssl_ca_certs: Optional[str] = Field(
-        None,
-        description="Path to SSL CA certificate file."
-    )
-    workers: Optional[int] = Field(
-        1,
-        description="Number of worker processes."
-    )
-    limit_concurrency: Optional[int] = Field(
-        None,
-        description="Maximum number of concurrent connections."
-    )
-    timeout_keep_alive: Optional[int] = Field(
-        5,
-        description="Timeout for keep-alive connections."
-    )
-    platform_url: Optional[str] = Field(
-        "https://api.openserv.ai",
-        description="The OpenServ platform API URL."
-    )
-    runtime_url: Optional[str] = Field(
-        "https://agents.openserv.ai",
-        description="The OpenServ runtime API URL."
-    )
+    """Options for initializing an agent."""
+    api_key: str
+    openai_api_key: Optional[str] = None
+    system_prompt: Optional[str] = None
+    port: Optional[int] = None
+    host: Optional[str] = None
+    model: str = "gpt-4"
+    log_level: Optional[str] = None
+    reload: Optional[bool] = None
+    debug: Optional[bool] = None
+    version: Optional[str] = None
+    require_https: Optional[bool] = None
+    trusted_hosts: Optional[List[str]] = None
+    ssl_keyfile: Optional[str] = None
+    ssl_certfile: Optional[str] = None
+    ssl_ca_certs: Optional[str] = None
+    workers: Optional[int] = None
+    limit_concurrency: Optional[int] = None
+    timeout_keep_alive: Optional[int] = None
+    platform_url: str = "https://api.openserv.ai"
+    runtime_url: str = "https://agents.openserv.ai"
+    on_error: Optional[Callable] = None
 
 class GetFilesParams(BaseModel):
     workspace_id: int = Field(..., gt=0, alias="workspaceId", description="Workspace ID must be a positive integer")
