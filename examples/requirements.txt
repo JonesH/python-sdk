@@ -1,0 +1,9 @@
+# Install SDK from GitHub
+git+https://github.com/openserv-labs/python-sdk.git
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Example-specific dependencies
+aiohttp>=3.8.0  # For external service integration examples
+websockets>=10.0  # For WebSocket examples 
