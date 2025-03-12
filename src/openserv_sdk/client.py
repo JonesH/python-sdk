@@ -68,7 +68,7 @@ class BaseClient:
         """
         try:
             # Start with base headers
-            request_headers = {}
+            request_headers = {'x-openserv-key': self.config.api_key}
             if headers:
                 request_headers.update(headers)
 
@@ -89,98 +89,76 @@ class BaseClient:
                     else:
                         files[field_name] = (None, str(field_value[0]))
 
+            # Construct full URL
+            url = self.config.platform_url + path if not path.startswith('http') else path
+            
+            # Make the request
             response = await self.client.request(
                 method,
-                path,
+                url,
                 content=content,
                 params=params,
                 headers=request_headers,
                 files=files
             )
             
-            logger.info("Response status: %d", response.status_code)
-            logger.debug("Response headers: %s", response.headers)
-            
+            # Handle response
             response.raise_for_status()
             
-            # Handle different content types
+            # Check if response is JSON
             content_type = response.headers.get('content-type', '')
             if 'application/json' in content_type:
-                return response.json() if response.content else None
-            elif 'text/html' in content_type or 'text/plain' in content_type:
-                return {'status': response.text}
+                return response.json()
+            elif 'text/' in content_type:
+                return {'data': response.text}
             else:
-                # For binary content, return raw bytes
-                return response.content
+                return {'data': response.content}
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise AuthenticationError("Invalid API key")
-            
-            # Try to get error details from response
-            error_details = None
+            status_code = e.response.status_code
             try:
-                if e.response.content:
-                    error_details = e.response.json()
-            except json.JSONDecodeError:
-                # If response is not JSON, use text content
-                error_details = {'error': e.response.text} if e.response.text else None
+                error_data = e.response.json()
+                error_message = error_data.get('error', str(e))
+            except:
+                error_message = str(e)
+                error_data = None
                 
-            raise APIError(
-                str(e),
-                status_code=e.response.status_code,
-                response=error_details
-            )
+            if status_code == 401:
+                raise AuthenticationError(error_message, status_code, error_data)
+            else:
+                raise APIError(error_message, status_code, error_data)
         except httpx.RequestError as e:
             raise APIError(f"Request failed: {str(e)}")
-        except json.JSONDecodeError as e:
-            raise APIError(f"Invalid JSON response: {str(e)}")
+        except Exception as e:
+            raise APIError(f"Unexpected error: {str(e)}")
 
 class OpenServClient(BaseClient):
-    """Client for making requests to the OpenServ API."""
+    """Client for interacting with the OpenServ API."""
     
-    def __init__(self, config: APIConfig):
-        super().__init__(config)
-        
     async def get(self, path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Make a GET request."""
-        url = f"{self.config.platform_url}{path}"
-        return await self._request('GET', url, params=params)
-        
-    async def post(
-        self,
-        path: str,
-        data: Union[Dict[str, Any], aiohttp.FormData],
-        headers: Optional[Dict[str, str]] = None
-    ) -> Dict[str, Any]:
-        """Make a POST request.
-        
-        Args:
-            path: The API endpoint path
-            data: The request data, either as a dict for JSON or FormData for multipart
-            headers: Optional custom headers to include in the request
-            
-        Returns:
-            Response data as dictionary
-        """
-        url = f"{self.config.platform_url}{path}"
-        return await self._request(
-            'POST',
-            url,
-            json_data=data if not isinstance(data, aiohttp.FormData) else None,
-            form_data=data if isinstance(data, aiohttp.FormData) else None,
-            headers=headers
+        """Make a GET request to the API."""
+        return await self._request("GET", path, params=params)
+    
+    async def post(self, path: str, data: Optional[Dict[str, Any]] = None, form_data: Optional[aiohttp.FormData] = None) -> Dict[str, Any]:
+        """Make a POST request to the API."""
+        if form_data:
+            return await self._request("POST", path, form_data=form_data)
+        return await self._request("POST", path, json_data=data)
+    
+    async def put(self, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a PUT request to the API."""
+        return await self._request("PUT", path, json_data=data)
+    
+    async def delete(self, path: str) -> Dict[str, Any]:
+        """Make a DELETE request to the API."""
+        return await self._request("DELETE", path)
+    
+    async def send_chat_message(self, workspace_id: int, agent_id: int, message: str) -> Dict[str, Any]:
+        """Send a chat message."""
+        return await self.post(
+            f"/workspaces/{workspace_id}/agent-chat/{agent_id}/message",
+            {"message": message}
         )
-        
-    async def put(self, path: str, data: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Make a PUT request."""
-        url = f"{self.config.platform_url}{path}"
-        return await self._request('PUT', url, json_data=data, headers=headers)
-        
-    async def delete(self, path: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Make a DELETE request."""
-        url = f"{self.config.platform_url}{path}"
-        return await self._request('DELETE', url, headers=headers)
 
     async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
         """Update a task's status."""
@@ -201,55 +179,36 @@ class OpenServClient(BaseClient):
             return {"status": "error", "error": str(e)}
 
 class RuntimeClient(BaseClient):
-    """Client for making requests to the OpenServ Runtime API."""
+    """Client for interacting with the OpenServ Runtime API."""
     
-    def __init__(self, config: APIConfig):
-        super().__init__(config)
-        
+    async def get(self, path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Make a GET request to the runtime API."""
+        url = f"{self.config.runtime_url}{path}"
+        return await self._request("GET", url, params=params)
+    
+    async def post(self, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a POST request to the runtime API."""
+        url = f"{self.config.runtime_url}{path}"
+        return await self._request("POST", url, json_data=data)
+    
     async def execute_task(
         self,
         workspace_id: int,
         task_id: int,
-        tools: list,
-        messages: list,
+        tools: List[Dict[str, Any]],
+        messages: List[Dict[str, str]],
         action: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Execute a task."""
-        url = f"{self.config.runtime_url}/runtime/execute"
-
-        # Convert tools to OpenAI function format
-        formatted_tools = []
-        for tool in tools:
-            formatted_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["parameters"]
-                }
+        """Execute a task on the runtime."""
+        return await self.post(
+            f"/workspaces/{workspace_id}/tasks/{task_id}/execute",
+            {
+                "tools": tools,
+                "messages": messages,
+                "action": action
             }
-            formatted_tools.append(formatted_tool)
+        )
 
-        payload = {
-            'workspaceId': workspace_id,
-            'taskId': task_id,
-            'tools': formatted_tools,
-            'messages': messages,
-            'action': action
-        }
-
-        logger.info(f"Executing task with payload: {json.dumps(payload, indent=2)}")
-        try:
-            response = await self._request('POST', url, json_data=payload)
-            if isinstance(response, bytes):
-                response = response.decode('utf-8')
-            return response if response else {}
-        except Exception as e:
-            logger.error(f"Failed to execute task: {str(e)}")
-            if isinstance(e, httpx.HTTPStatusError):
-                logger.error(f"Response content: {e.response.content}")
-            raise APIError(f"Failed to execute task: {str(e)}")
-        
     async def handle_chat(
         self,
         tools: list,

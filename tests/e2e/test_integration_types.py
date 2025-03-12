@@ -121,6 +121,9 @@ async def test_task_operations_workflow(test_agent):
     detail_result = await test_agent.get_task_detail(detail_params)
     assert detail_result["task"]["status"] == TaskStatus.IN_PROGRESS
     
+    # Verify get_task_detail was called with correct URL format
+    test_agent.api_client.get.assert_called_with("/workspaces/1/task/2/detail")
+    
     # Update task status (test different statuses)
     for status in [TaskStatus.IN_PROGRESS, TaskStatus.DONE, TaskStatus.ERROR]:
         update_params = UpdateTaskStatusParams(
@@ -148,6 +151,21 @@ async def test_task_operations_workflow(test_agent):
         body={"role": "assistant", "content": "Test"}
     )
     await test_agent.add_log_to_task(openai_log_params)
+    
+    # Verify correct URL formats were used
+    test_agent.api_client.post.assert_any_call(
+        "/workspaces/1/task/2/status",
+        {"status": TaskStatus.ERROR.value}
+    )
+    
+    test_agent.api_client.post.assert_any_call(
+        "/workspaces/1/task/2/log",
+        {
+            "severity": "info",
+            "type": "text",
+            "body": "Test log message"
+        }
+    )
 
 @pytest.mark.asyncio
 async def test_process_and_chat_workflow(test_agent):
@@ -236,9 +254,33 @@ async def test_task_execution_workflow(test_agent):
     call_args = test_agent.runtime_client.execute_task.call_args
     assert call_args[1]["workspace_id"] == 1
     assert call_args[1]["task_id"] == 1
+    assert "tools" in call_args[1]
+    assert "messages" in call_args[1]
+    assert "action" in call_args[1]
     
-    # Verify status update was called
-    test_agent.api_client.post.assert_called_once()
+    # Verify status update was called with correct URL format
+    test_agent.api_client.post.assert_called_with(
+        "/workspaces/1/task/1/status",
+        {"status": "in-progress"}
+    )
+    
+    # Test error handling
+    test_agent.runtime_client.execute_task.side_effect = Exception("Test error")
+    
+    # Reset the post mock to track new calls
+    test_agent.api_client.post.reset_mock()
+    
+    # Execute task again, this time it should fail
+    try:
+        await test_agent.do_task(task_action)
+    except:
+        pass  # We expect an exception
+    
+    # Verify mark_task_as_errored was called with correct URL format
+    test_agent.api_client.post.assert_any_call(
+        "/workspaces/1/task/1/error",
+        {"error": "Test error"}
+    )
 
 @pytest.mark.asyncio
 async def test_human_assistance_workflow(test_agent):
@@ -264,6 +306,16 @@ async def test_human_assistance_workflow(test_agent):
         agent_dump={"state": "planning state"}
     )
     await test_agent.request_human_assistance(plan_params)
+    
+    # Verify correct URL format was used
+    test_agent.api_client.post.assert_any_call(
+        "/workspaces/1/task/2/human-assistance",
+        {
+            "type": "text",
+            "question": "Need help with this task",
+            "agentDump": {"state": "current state"}
+        }
+    )
 
 @pytest.mark.asyncio
 async def test_integration_workflow(test_agent):

@@ -84,8 +84,6 @@ async def test_task_operations():
     ]
     post_mock = AsyncMock(side_effect=post_responses)
     agent._api_client.post = post_mock
-    
-    agent._api_client.put = AsyncMock(return_value={"data": {"status": "success"}})
 
     # Test task listing
     tasks = await agent.get_tasks(GetTasksParams(workspace_id=1))
@@ -109,4 +107,10 @@ async def test_task_operations():
         task_id=1,
         status="in-progress"
     ))
-    assert status_update == {"status": "success"} 
+    assert status_update == {"status": "success"}
+    
+    # Verify correct URL format was used
+    agent._api_client.post.assert_called_with(
+        "/workspaces/1/task/1/status",
+        {"status": "in-progress"}
+    ) 

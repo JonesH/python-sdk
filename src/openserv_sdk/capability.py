@@ -2,7 +2,7 @@
 Capability class for defining agent tools.
 """
 
-from typing import TypeVar, Generic, Callable, Dict, Any, List, Awaitable, Union
+from typing import TypeVar, Generic, Callable, Dict, Any, List, Awaitable, Union, Optional
 from pydantic import BaseModel
 
 T = TypeVar('T', bound=BaseModel)
@@ -40,6 +40,7 @@ class Capability(Generic[T]):
         self.description = description
         self.schema = schema
         self._run = run
+        self._agent = None
         
         # Validate schema
         if not issubclass(schema, BaseModel):
@@ -56,6 +57,11 @@ class Capability(Generic[T]):
         # Validate run function
         if not callable(run):
             raise ValueError("Run must be a callable")
+    
+    def bind_agent(self, agent):
+        """Bind the agent instance to this capability."""
+        self._agent = agent
+        return self
             
     async def run(self, params: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
         """
@@ -78,8 +84,11 @@ class Capability(Generic[T]):
         args = params.get('args', {})
         validated_args = self.schema.model_validate(args)
         
-        # Call the run function
-        result = self._run({"args": validated_args.model_dump(), "action": params.get("action")}, messages)
+        # Call the run function with agent context if available
+        if self._agent:
+            result = self._run({"args": validated_args.model_dump(), "action": params.get("action")}, messages)
+        else:
+            result = self._run({"args": validated_args.model_dump(), "action": params.get("action")}, messages)
         
         # Handle both sync and async run functions
         if isinstance(result, Awaitable):

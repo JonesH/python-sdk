@@ -11,11 +11,13 @@ class CommonConfig:
     populate_by_name = True
 
 class AgentKind(str, Enum):
+    """Agent kind enumeration."""
     EXTERNAL = 'external'
     ELIZA = 'eliza'
     OPENSERV = 'openserv'
 
 class TaskStatus(str, Enum):
+    """Task status enumeration."""
     TODO = "to-do"
     IN_PROGRESS = "in-progress"
     HUMAN_ASSISTANCE_REQUIRED = "human-assistance-required"
