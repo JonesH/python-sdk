@@ -330,6 +330,16 @@ class Agent:
         logger.info(f"Task ID: {action.task.id}")
         logger.info(f"Workspace ID: {action.workspace.id}")
 
+        messages = [
+            {'role': 'system', 'content': self.config.system_prompt}
+        ]
+
+        if action.task.description:
+            messages.append({
+                'role': 'user',
+                'content': action.task.description
+            })
+
         try:
             # Update status to in-progress
             try:
@@ -342,23 +352,32 @@ class Agent:
             except Exception as status_error:
                 logger.warning(f"Failed to update task status: {str(status_error)}")
 
-            # Process the task
-            result = await self.process({
-                "messages": [
-                    {'role': 'system', 'content': self.config.system_prompt},
-                    {'role': 'user', 'content': action.task.description} if action.task.description else None
-                ],
-                "action": action
-            })
+            # Execute the task and let the runtime handle the response
+            logger.info(f"Executing task {action.task.id}")
+            
+            tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
+            action_data = action.model_dump()
+            
+            logger.info(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
+            logger.info(f"Messages: {json.dumps(messages, indent=2)}")
+            logger.info(f"Action data: {json.dumps(action_data, indent=2)}")
 
-            if isinstance(result, dict) and "result" in result:
-                await self.api_client.complete_task(
+            try:
+                await self._runtime_client.execute_task(
                     workspace_id=action.workspace.id,
                     task_id=action.task.id,
-                    output=result["result"]
+                    tools=tools_json,
+                    messages=messages,
+                    action=action_data
                 )
-            else:
-                raise RuntimeError("Invalid task result format")
+            except Exception as exec_error:
+                logger.error(f"Task execution failed: {str(exec_error)}")
+                await self.mark_task_as_errored(
+                    workspace_id=action.workspace.id,
+                    task_id=action.task.id,
+                    error=str(exec_error)
+                )
+                raise
 
         except Exception as error:
             logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
@@ -375,6 +394,24 @@ class Agent:
             
             self.handle_error(error, {"context": "task_execution"})
             raise
+
+    @staticmethod
+    def _convert_tool_to_json_schema(tool: Capability[BaseModel]) -> Dict[str, Any]:
+        """Convert a tool to JSON schema format."""
+        schema = tool.schema.model_json_schema()
+        # Remove title from schema if present
+        if "title" in schema:
+            del schema["title"]
+        # Remove title from properties if present
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            for prop in schema["properties"].values():
+                if isinstance(prop, dict) and "title" in prop:
+                    del prop["title"]
+        return {
+            'name': tool.name,
+            'description': tool.description,
+            'parameters': schema
+        }
 
     async def respond_to_chat(self, action: RespondChatMessageAction) -> None:
       
