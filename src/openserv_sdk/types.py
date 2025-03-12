@@ -16,12 +16,11 @@ class AgentKind(str, Enum):
     OPENSERV = 'openserv'
 
 class TaskStatus(str, Enum):
-    TODO = 'to-do'
-    IN_PROGRESS = 'in-progress'
-    HUMAN_ASSISTANCE_REQUIRED = 'human-assistance-required'
-    ERROR = 'error'
-    DONE = 'done'
-    CANCELLED = 'cancelled'
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    ERROR = "ERROR"
+    CANCELLED = "CANCELLED"
 
 class AgentBase(BaseModel):
     id: int
@@ -161,20 +160,86 @@ class ProcessParams(BaseModel):
 
 class AgentOptions(BaseModel):
     """Configuration options for creating a new Agent instance."""
-    system_prompt: str
-    api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    model: Optional[str] = "gpt-4"
-    port: Optional[int] = 7378
-    host: Optional[str] = '0.0.0.0'
-    log_level: Optional[str] = 'debug'
-    reload: Optional[bool] = False
-    platform_url: Optional[str] = 'https://api.openserv.ai'
-    runtime_url: Optional[str] = 'https://agents.openserv.ai'
-    on_error: Optional[Callable[[Exception, Dict[str, Any]], None]] = None
-
-    class Config(CommonConfig):
-        pass
+    api_key: Optional[str] = Field(
+        None,
+        description="The OpenServ API key for authentication. Can also be provided via OPENSERV_API_KEY environment variable."
+    )
+    openai_api_key: Optional[str] = Field(
+        None,
+        description="The OpenAI API key for chat completions. Can also be provided via OPENAI_API_KEY environment variable."
+    )
+    system_prompt: str = Field(
+        ...,
+        description="The system prompt that defines the agent's behavior and context."
+    )
+    port: Optional[int] = Field(
+        7378,
+        description="The port number for the agent's HTTP server."
+    )
+    host: Optional[str] = Field(
+        "0.0.0.0",
+        description="The host address for the agent's HTTP server."
+    )
+    model: Optional[str] = Field(
+        "gpt-4",
+        description="The OpenAI model to use for chat completions."
+    )
+    log_level: Optional[str] = Field(
+        "info",
+        description="The logging level for the agent."
+    )
+    reload: Optional[bool] = Field(
+        False,
+        description="Whether to enable auto-reload for development."
+    )
+    debug: Optional[bool] = Field(
+        False,
+        description="Whether to enable debug mode."
+    )
+    version: Optional[str] = Field(
+        "1.0.0",
+        description="The version of the agent."
+    )
+    require_https: Optional[bool] = Field(
+        False,
+        description="Whether to require HTTPS connections."
+    )
+    trusted_hosts: Optional[List[str]] = Field(
+        None,
+        description="List of trusted host patterns."
+    )
+    ssl_keyfile: Optional[str] = Field(
+        None,
+        description="Path to SSL key file."
+    )
+    ssl_certfile: Optional[str] = Field(
+        None,
+        description="Path to SSL certificate file."
+    )
+    ssl_ca_certs: Optional[str] = Field(
+        None,
+        description="Path to SSL CA certificate file."
+    )
+    workers: Optional[int] = Field(
+        1,
+        description="Number of worker processes."
+    )
+    limit_concurrency: Optional[int] = Field(
+        None,
+        description="Maximum number of concurrent connections."
+    )
+    timeout_keep_alive: Optional[int] = Field(
+        5,
+        description="Timeout for keep-alive connections."
+    )
+    platform_url: Optional[str] = Field(
+        "https://api.openserv.ai",
+        description="The OpenServ platform API URL."
+    )
+    runtime_url: Optional[str] = Field(
+        "https://agents.openserv.ai",
+        description="The OpenServ runtime API URL."
+    )
 
 class GetFilesParams(BaseModel):
     workspace_id: int = Field(..., gt=0, alias="workspaceId", description="Workspace ID must be a positive integer")
@@ -394,6 +459,71 @@ class AnalyzeEngagementParams(BaseModel):
     """Parameters for analyzing engagement metrics."""
     platform: str
     metrics: EngagementMetrics
+
+    class Config(CommonConfig):
+        pass
+
+class GetSecretsParams(BaseModel):
+    """Parameters for getting secrets from a workspace collection."""
+    workspace_id: int = Field(..., gt=0, alias="workspaceId", description="Workspace ID must be a positive integer")
+    collection_id: Optional[str] = Field(None, alias="collectionId", description="Optional collection ID to filter secrets")
+
+    class Config(CommonConfig):
+        json_schema_extra = {
+            "examples": [
+                {
+                    "workspaceId": 1,
+                    "collectionId": "api-keys"
+                }
+            ]
+        }
+
+class GetSecretValueParams(BaseModel):
+    """Parameters for getting a specific secret value."""
+    workspace_id: int = Field(..., gt=0, alias="workspaceId", description="Workspace ID must be a positive integer")
+    collection_id: str = Field(..., alias="collectionId", description="Collection ID containing the secret")
+    secret_id: str = Field(..., alias="secretId", description="ID of the secret to retrieve")
+
+    class Config(CommonConfig):
+        json_schema_extra = {
+            "examples": [
+                {
+                    "workspaceId": 1,
+                    "collectionId": "api-keys",
+                    "secretId": "openai-key"
+                }
+            ]
+        }
+
+class SecretValue(BaseModel):
+    """Model representing a secret value."""
+    value: str
+    created_at: datetime = Field(..., alias="createdAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+
+    class Config(CommonConfig):
+        pass
+
+class Secret(BaseModel):
+    """Model representing a secret."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    collection_id: str = Field(..., alias="collectionId")
+    created_at: datetime = Field(..., alias="createdAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+
+    class Config(CommonConfig):
+        pass
+
+class SecretCollection(BaseModel):
+    """Model representing a collection of secrets."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    secrets: List[Secret] = []
+    created_at: datetime = Field(..., alias="createdAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
 
     class Config(CommonConfig):
         pass 

@@ -181,6 +181,24 @@ class OpenServClient(BaseClient):
         url = f"{self.config.platform_url}{path}"
         return await self._request('DELETE', url, headers=headers)
 
+    async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
+        """Update a task's status."""
+        try:
+            response = await self._request('PUT', f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status", json_data={"status": params.status.value if isinstance(params.status, TaskStatus) else params.status})
+            return response["data"]
+        except Exception as e:
+            logger.error(f"Failed to update task status: {str(e)}")
+            return {"status": "error", "error": str(e)}
+
+    async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
+        """Mark a task as errored with the given error message."""
+        try:
+            response = await self._request('PUT', f"/workspaces/{workspace_id}/tasks/{task_id}/error", json_data={"error": error})
+            return response
+        except Exception as e:
+            logger.error(f"Failed to mark task as errored: {str(e)}")
+            return {"status": "error", "error": str(e)}
+
 class RuntimeClient(BaseClient):
     """Client for making requests to the OpenServ Runtime API."""
     
