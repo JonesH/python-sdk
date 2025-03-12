@@ -377,6 +377,7 @@ class Agent:
             raise
 
     async def respond_to_chat(self, action: RespondChatMessageAction) -> None:
+      
         """Respond to a chat message."""
         try:
             result = await self.process({
@@ -403,6 +404,21 @@ class Agent:
                 agent_id=action.agentId,
                 message=f"Error: {str(e)}"
             )
+
+    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert tools to OpenAI format."""
+        openai_tools = []
+        for tool in tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
 
     def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert tools to OpenAI format."""
@@ -587,7 +603,7 @@ class Agent:
         """Update a task's status."""
         try:
             response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
+                f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
                 {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
             )
             return response["data"]
