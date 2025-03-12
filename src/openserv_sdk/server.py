@@ -107,41 +107,26 @@ class AgentServer:
                 )
             
         @self.app.get("/health")
-        async def health_check():
+        def health_check():
             """Health check endpoint."""
-            return {
-                "status": "ok",
-                "timestamp": datetime.now().isoformat(),
-                "version": self.config.version
-            }
+            return {"status": "ok"}
 
         @self.app.post("/tools/{tool_name}")
         async def handle_tool(tool_name: str, request: Request):
-            """Handle tool execution requests."""
+            """Handle a tool execution request."""
             try:
                 if not self.agent:
                     raise HTTPException(status_code=500, detail="Agent not initialized")
                 
                 body = await request.json()
-                logger.debug(f"Tool request received for {tool_name}: {body}")
-                
                 result = await self.agent.handle_tool_route(tool_name, body)
-                return {"result": result}
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in tool request: {str(e)}")
-                raise HTTPException(status_code=422, detail="Invalid JSON payload")
-            except ToolError as e:
-                logger.error(f"Tool error: {str(e)}")
-                raise HTTPException(status_code=400, detail=str(e))
-            except AuthenticationError as e:
-                logger.error(f"Authentication error: {str(e)}")
-                raise HTTPException(status_code=401, detail=str(e))
+                return result
+            except HTTPException as e:
+                logger.error(f"Error handling tool request: {e.status_code}: {e.detail}")
+                raise
             except Exception as e:
                 logger.error(f"Error handling tool request: {str(e)}", exc_info=True)
-                raise HTTPException(
-                    status_code=500,
-                    detail="Internal server error" if not self.config.debug else str(e)
-                )
+                raise HTTPException(status_code=500, detail=str(e))
     
     def set_agent(self, agent):
         """Set the agent instance for handling requests."""
