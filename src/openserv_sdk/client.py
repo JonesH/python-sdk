@@ -6,6 +6,7 @@ import httpx
 from typing import Any, Dict, Optional, List, Union, BinaryIO
 from .config import APIConfig
 from .exceptions import APIError, AuthenticationError
+from .types import UpdateTaskStatusParams, TaskStatus
 import logging
 import json
 from datetime import datetime
