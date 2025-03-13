@@ -11,6 +11,10 @@ import logging
 import json
 from datetime import datetime
 import aiohttp
+import os
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Configure logging to show INFO and above
 logging.basicConfig(level=logging.INFO)
@@ -18,8 +22,6 @@ logging.basicConfig(level=logging.INFO)
 # Set httpx logger to debug level
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("httpcore").setLevel(logging.ERROR)
-
-logger = logging.getLogger(__name__)
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -200,14 +202,34 @@ class RuntimeClient(BaseClient):
         action: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute a task on the runtime."""
-        return await self.post(
-            f"/workspaces/{workspace_id}/tasks/{task_id}/execute",
-            {
+        try:
+            # First try the new endpoint format
+            url = "/runtime/execute"
+            payload = {
+                "workspaceId": workspace_id,
+                "taskId": task_id,
                 "tools": tools,
                 "messages": messages,
                 "action": action
             }
-        )
+            logger.info(f"Executing task with payload: {json.dumps(payload, indent=2)}")
+            return await self.post(url, payload)
+        except Exception as e:
+            logger.error(f"Failed to execute task with new endpoint format: {str(e)}")
+            # Fall back to the old endpoint format
+            try:
+                url = f"/workspaces/{workspace_id}/tasks/{task_id}/execute"
+                payload = {
+                    "tools": tools,
+                    "messages": messages,
+                    "action": action
+                }
+                logger.info(f"Falling back to old endpoint format: {url}")
+                logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+                return await self.post(url, payload)
+            except Exception as fallback_error:
+                logger.error(f"Failed to execute task with fallback endpoint: {str(fallback_error)}")
+                raise APIError(f"Failed to execute task: {str(e)}")
 
     async def handle_chat(
         self,
