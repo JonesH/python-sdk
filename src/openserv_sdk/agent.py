@@ -7,9 +7,8 @@ import json
 import logging
 import asyncio
 import traceback
-from typing import Dict, Any, List, Optional, Union, TypeVar, Generic, Callable, Type
+from typing import Dict, Any, List, Optional, Union, TypeVar, Generic, Callable, Type, Awaitable, cast
 from pydantic import BaseModel
-from openai import AsyncOpenAI
 import aiohttp
 import mimetypes
 from datetime import datetime
@@ -91,7 +90,7 @@ class Agent:
         # Initialize private instance variables
         self._api_client: Optional[OpenServClient] = None
         self._runtime_client: Optional[RuntimeClient] = None
-        self._openai_client: Optional[AsyncOpenAI] = None
+        self._openai_client: Optional[Any] = None
         self._server: Optional[AgentServer] = None
         self._tools: List[Capability[BaseModel]] = []
         
@@ -140,12 +139,12 @@ class Agent:
         self._server = value
 
     @property
-    def openai_client(self) -> Optional[AsyncOpenAI]:
+    def openai_client(self) -> Optional[Any]:
         """Get the OpenAI client instance."""
         return self._openai_client
 
     @openai_client.setter
-    def openai_client(self, value: Optional[AsyncOpenAI]) -> None:
+    def openai_client(self, value: Optional[Any]) -> None:
         """Set the OpenAI client instance."""
         self._openai_client = value
 
@@ -232,18 +231,18 @@ class Agent:
             self.add_capability(capability)
         return self
         
-    def capability(self, name: str, description: str = None, schema: type[BaseModel] = None):
+    def capability(self, name: str = None, description: str = None, schema: type[BaseModel] = None):
         """
         Decorator for adding a capability to the agent.
         
         Example:
-            @agent.capability("greet")
+            @agent.capability(name="greet", description="Greet a user", schema=GreetSchema)
             async def greet(params: dict, messages: list) -> str:
                 name = params["args"]["name"]
                 return f"Hello, {name}!"
                 
         Args:
-            name: Name of the capability
+            name: Name of the capability (defaults to function name if not provided)
             description: Optional description of the capability
             schema: Optional Pydantic model class for parameter validation
             
@@ -251,8 +250,11 @@ class Agent:
             Decorator function
         """
         def decorator(func):
+            # Use function name if name not provided
+            capability_name = name or func.__name__
+            
             # If no description is provided, use the function's docstring
-            func_description = description or func.__doc__ or f"Execute the {name} capability"
+            func_description = description or func.__doc__ or f"Execute the {capability_name} capability"
             
             # Use provided schema or create a default one
             schema_class = schema
@@ -266,7 +268,7 @@ class Agent:
             
             # Create and add the capability
             capability = Capability(
-                name=name,
+                name=capability_name,
                 description=func_description,
                 schema=schema_class,
                 run=func
@@ -325,8 +327,33 @@ class Agent:
             raise ConfigurationError("OpenAI API key is required for process method. Provide it in options or set OPENAI_API_KEY environment variable.")
             
         try:
+            # Import OpenAI here to make it optional
+            try:
+                from openai import AsyncOpenAI
+            except ImportError:
+                raise ImportError(
+                    "The 'openai' package is required to use the process method. "
+                    "Install it with 'pip install \"openserv-sdk[openai]\"' or 'pip install openai==0.28.1'"
+                )
+                
             if not self.openai_client:
-                self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
+                # Initialize OpenAI client with compatibility for different versions
+                try:
+                    # For newer versions of OpenAI package
+                    self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
+                except TypeError as e:
+                    if "unexpected keyword argument 'proxies'" in str(e):
+                        # For newer versions that don't support proxies
+                        logger.info("Using OpenAI client without proxies")
+                        self.openai_client = AsyncOpenAI(
+                            api_key=self.config.openai.api_key,
+                            base_url="https://api.openai.com/v1"
+                        )
+                    else:
+                        # Try older initialization format for OpenAI < 1.0.0
+                        logger.info("Falling back to older OpenAI client initialization")
+                        from openai import AsyncOpenAI as LegacyAsyncOpenAI
+                        self.openai_client = LegacyAsyncOpenAI(api_key=self.config.openai.api_key)
                 
             # Prepare messages
             messages = params.messages.copy()
@@ -877,17 +904,39 @@ class Agent:
         response = await self._api_client.get(f"/workspaces/{params.workspace_id}/tasks")
         return response["data"]
 
-    async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> Dict[str, Any]:
-        """Mark a task as errored with the given error message."""
+    async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> None:
+        """
+        Mark a task as errored.
+        
+        This method updates the task status to ERROR and sets the error message.
+        It handles 404 errors gracefully, as the task might have been deleted or moved.
+        
+        Args:
+            workspace_id: ID of the workspace containing the task
+            task_id: ID of the task to mark as errored
+            error: Error message to set
+            
+        Raises:
+            APIError: If the API request fails (except for 404 errors)
+        """
         try:
-            response = await self._api_client.post(
-                f"/workspaces/{workspace_id}/task/{task_id}/error",
-                {"error": error}
+            await self._api_client.mark_task_as_errored(
+                workspace_id=workspace_id,
+                task_id=task_id,
+                error=error
             )
-            return response
+            logger.info(f"Task {task_id} marked as errored")
         except Exception as e:
-            logger.error(f"Failed to mark task as errored: {str(e)}")
-            return {"status": "error", "error": str(e)}
+            # If it's a 404 error, log it but don't raise
+            if "404 Not Found" in str(e):
+                logger.warning(f"Failed to mark task as errored: {str(e)}")
+            else:
+                logger.error(f"Failed to mark task as errored: {str(e)}")
+                self.handle_error(e, {
+                    "workspace_id": workspace_id,
+                    "task_id": task_id,
+                    "error": error
+                })
 
     async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
         """Complete a task."""
@@ -956,17 +1005,32 @@ class Agent:
         )
         return response["data"]
 
-    async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
-        """Update a task's status."""
+    async def update_task_status(self, params: UpdateTaskStatusParams) -> Optional[Dict[str, Any]]:
+        """
+        Update the status of a task.
+        
+        This method updates the task status and handles errors gracefully.
+        
+        Args:
+            params: UpdateTaskStatusParams object containing:
+                - workspace_id: ID of the workspace containing the task
+                - task_id: ID of the task to update
+                - status: New status for the task
+                
+        Returns:
+            Response from the API or None if the request fails
+            
+        Raises:
+            No exceptions are raised, errors are logged
+        """
         try:
-            response = await self._api_client.post(
-                f"/workspaces/{params.workspace_id}/task/{params.task_id}/status",
-                {"status": params.status.value if isinstance(params.status, TaskStatus) else params.status}
-            )
-            return response["data"]
+            response = await self._api_client.update_task_status(params)
+            logger.info(f"Task {params.task_id} status updated to {params.status}")
+            return response
         except Exception as e:
             logger.error(f"Failed to update task status: {str(e)}")
-            return {"status": "error", "error": str(e)}
+            self.handle_error(e, {"params": params.model_dump()})
+            return None
 
     async def call_integration(self, integration: IntegrationCallRequest) -> Dict[str, Any]:
         """
