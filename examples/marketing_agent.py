@@ -1,59 +1,76 @@
+#!/usr/bin/env python3
+"""
+Marketing Agent Example
+
+This example demonstrates a specialized marketing agent with social media capabilities.
+"""
+
 import os
+import asyncio
 from pathlib import Path
-from typing import Dict, List
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-import openai
-import logging
-import traceback
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+import sys
 
-# Import from openserv_sdk package
-from openserv_sdk import Agent, AgentOptions, Capability
+# Add the src directory to the Python path
+src_path = Path(__file__).parent.parent / "src"
+sys.path.insert(0, str(src_path))
 
+# Import from the local SDK
+from openserv_sdk import Agent, AgentOptions
+from openserv_sdk.logger import logger
+
+# Load environment variables from .env file
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+# Check for required environment variables
+if not os.environ.get("OPENAI_API_KEY"):
+    raise ValueError("OPENAI_API_KEY environment variable is required")
 
-def get_openai_client():
-    """Get OpenAI client with API key validation."""
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError('OPENAI_API_KEY environment variable is required')
-    return openai.OpenAI(api_key=api_key)
+# Initialize OpenAI client
+openai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-class SocialMediaPostParams(BaseModel):
-    platform: str = Field(..., description="The social media platform to post to")
+# Initialize the agent
+marketing_manager = Agent(
+    options=AgentOptions(
+        system_prompt=Path(__file__).parent.joinpath("system.md").read_text(),
+        api_key=os.environ.get("OPENSERV_API_KEY"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY")
+    )
+)
+
+# Define parameter models for capabilities
+class SocialMediaPlatform(str):
+    TWITTER = "twitter"
+    LINKEDIN = "linkedin"
+    FACEBOOK = "facebook"
+
+class CreateSocialMediaPostParams(BaseModel):
+    platform: str = Field(..., description="The social media platform to create a post for")
     topic: str = Field(..., description="The topic to create a post about")
 
 class EngagementMetrics(BaseModel):
-    likes: int = Field(..., ge=0)
-    shares: int = Field(..., ge=0)
-    comments: int = Field(..., ge=0)
-    impressions: int = Field(..., ge=0)
+    likes: int = Field(..., description="Number of likes")
+    shares: int = Field(..., description="Number of shares")
+    comments: int = Field(..., description="Number of comments")
+    impressions: int = Field(..., description="Number of impressions")
 
 class AnalyzeEngagementParams(BaseModel):
     platform: str = Field(..., description="The social media platform to analyze")
-    metrics: EngagementMetrics
+    metrics: EngagementMetrics = Field(..., description="Engagement metrics to analyze")
 
-async def create_social_media_post(params: Dict, messages: List[Dict[str, str]]) -> str:
-    """Creates a social media post for the specified platform."""
+# Add capabilities to the agent
+async def create_social_media_post(agent, params, messages):
     try:
-        args = params.get('args', {})
-        logger.info(f"Creating social media post with args: {args}")
+        args = params["args"]
         
-        client = openai.AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        
-        # Validate platform is one of the supported platforms
-        platform = args['platform'].lower()
-        if platform not in ['twitter', 'linkedin', 'facebook']:
-            raise ValueError(f"Unsupported platform: {platform}")
-        
-        completion = await client.chat.completions.create(
-            model='gpt-4',  # Changed from gpt-4o to gpt-4
+        completion = await agent.openai.chat.completions.create(
+            model="gpt-4",
             messages=[
                 {
-                    'role': 'system',
-                    'content': f"""You are a marketing expert. Create a compelling {platform} post about: {args['topic']}
+                    "role": "system",
+                    "content": f"""You are a marketing expert. Create a compelling {args.platform} post about: {args.topic}
 
 Follow these platform-specific guidelines:
 - Twitter: Max 280 characters, casual tone, use hashtags
@@ -62,37 +79,40 @@ Follow these platform-specific guidelines:
 
 Include emojis where appropriate. Focus on driving engagement.
 
-Only generate post for the given platform. Don't generate posts for other platforms."""
+Only generate post for the given platform. Don't generate posts for other platforms.
+
+Save the post in markdown format as a file and attach it to the task.
+"""
                 },
                 {
-                    'role': 'user',
-                    'content': args['topic']
+                    "role": "user",
+                    "content": args.topic
                 }
             ]
         )
-
+        
         generated_post = completion.choices[0].message.content
-        logger.info(f"Generated {platform} post: {generated_post}")
-        return generated_post or 'Failed to generate post'
+        logger.info(f"Generated {args.platform} post: {generated_post}")
+        
+        if not generated_post:
+            logger.error("Failed to generate post")
+            return "Failed to generate post"
+            
+        return generated_post
     except Exception as e:
-        logger.error(f"Failed to create social media post: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return f"Failed to generate post: {str(e)}"
+        logger.error(f"Error in create_social_media_post: {str(e)}")
+        return f"Error generating post: {str(e)}"
 
-async def analyze_engagement(params: Dict, messages: List[Dict[str, str]]) -> str:
-    """Analyzes social media engagement metrics and provides recommendations."""
+async def analyze_engagement(agent, params, messages):
     try:
-        args = params.get('args', {})
-        logger.info(f"Analyzing engagement with args: {args}")
+        args = params["args"]
         
-        client = openai.AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        
-        completion = await client.chat.completions.create(
-            model='gpt-4',  # Changed from gpt-4o to gpt-4
+        completion = await agent.openai.chat.completions.create(
+            model="gpt-4",
             messages=[
                 {
-                    'role': 'system',
-                    'content': """You are a social media analytics expert. Analyze the engagement metrics and provide actionable recommendations.
+                    "role": "system",
+                    "content": """You are a social media analytics expert. Analyze the engagement metrics and provide actionable recommendations.
 
 Consider platform-specific benchmarks:
 - Twitter: Engagement rate = (likes + shares + comments) / impressions
@@ -106,66 +126,46 @@ Provide:
 4. Key metrics to focus on for improvement"""
                 },
                 {
-                    'role': 'user',
-                    'content': str(args)
+                    "role": "user",
+                    "content": str(args.model_dump())
                 }
             ]
         )
-
-        analysis = completion.choices[0].message.content
-        logger.info(f"Generated engagement analysis: {analysis}")
-        return analysis or 'Failed to analyze engagement'
-    except Exception as e:
-        logger.error(f"Failed to analyze engagement: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return f"Failed to analyze engagement: {str(e)}"
-
-async def create_marketing_agent() -> Agent:
-    """Create and configure the marketing agent."""
-    # Read system prompt from file
-    system_prompt_path = Path(__file__).parent / 'system.md'
-    if not system_prompt_path.exists():
-        raise FileNotFoundError("system.md not found in examples directory")
-
-    marketing_manager = Agent(
-        AgentOptions(
-            system_prompt=system_prompt_path.read_text(),
-            api_key=os.getenv('OPENSERV_API_KEY'),
-            openai_api_key=os.getenv('OPENAI_API_KEY'),
-            port=7379  # Add different port
-        )
-    )
-
-    # Add capabilities
-    marketing_manager.add_capabilities([
-        Capability(
-            name='createSocialMediaPost',
-            description='Creates a social media post for the specified platform',
-            schema=SocialMediaPostParams,
-            run=create_social_media_post
-        ),
-        Capability(
-            name='analyzeEngagement',
-            description='Analyzes social media engagement metrics and provides recommendations',
-            schema=AnalyzeEngagementParams,
-            run=analyze_engagement
-        )
-    ])
-
-    return marketing_manager
-
-if __name__ == '__main__':
-    import asyncio
-    
-    async def main():
-        agent = await create_marketing_agent()
-        await agent.start()
         
-        try:
-            # Keep the agent running
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            await agent.stop()
+        analysis = completion.choices[0].message.content
+        logger.info(f"Generated engagement analysis for {args.platform}: {analysis}")
+        
+        if not analysis:
+            logger.error("Failed to analyze engagement")
+            return "Failed to analyze engagement"
+            
+        return analysis
+    except Exception as e:
+        logger.error(f"Error in analyze_engagement: {str(e)}")
+        return f"Error analyzing engagement: {str(e)}"
 
-    asyncio.run(main())
+marketing_manager.add_capabilities([
+    {
+        "name": "createSocialMediaPost",
+        "description": "Creates a social media post for the specified platform",
+        "schema": CreateSocialMediaPostParams,
+        "run": create_social_media_post
+    },
+    {
+        "name": "analyzeEngagement",
+        "description": "Analyzes social media engagement metrics and provides recommendations",
+        "schema": AnalyzeEngagementParams,
+        "run": analyze_engagement
+    }
+])
+
+# Start the agent
+if __name__ == "__main__":
+    try:
+        logger.info("Starting marketing agent...")
+        asyncio.run(marketing_manager.start())
+    except KeyboardInterrupt:
+        logger.info("Agent stopped by user")
+    except Exception as e:
+        logger.error(f"Error running agent: {str(e)}")
+        raise 

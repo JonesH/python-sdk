@@ -1,101 +1,64 @@
-"""
-Capability class for defining agent tools.
-"""
-
-from typing import TypeVar, Generic, Callable, Dict, Any, List, Awaitable, Union, Optional
+from typing import Any, Callable, Dict, List, Type, Union, TypeVar, Generic, Protocol, Awaitable, Optional
 from pydantic import BaseModel
+from .schema_types import ChatCompletionMessageParam
 
 T = TypeVar('T', bound=BaseModel)
 
+class CapabilityFuncParams(Generic[T]):
+    """Parameters for a capability's run function."""
+    args: T
+    action: Optional[Dict[str, Any]] = None
+
 class Capability(Generic[T]):
     """
-    Represents a tool/capability that an agent can use.
+    Represents a capability that an agent can perform.
     
-    Each capability has:
-    - A unique name
-    - A description of what it does
-    - A Pydantic schema defining its parameters
-    - A run function that executes the capability
+    A capability has a name, description, schema for parameters validation,
+    and a run function that implements its behavior.
+    
+    Type Parameters:
+        T: The type of the parameters schema, must be a subclass of BaseModel
     """
     
     def __init__(
         self,
         name: str,
         description: str,
-        schema: type[T],
-        run: Callable[[Dict[str, Any], List[Dict[str, str]]], Union[str, Awaitable[str]]]
-    ) -> None:
+        schema: Type[T],
+        run: Callable[['Agent', CapabilityFuncParams[T], List[ChatCompletionMessageParam]], Union[str, Awaitable[str]]]
+    ):
         """
         Initialize a new capability.
         
         Args:
             name: Unique name for the capability
             description: Description of what the capability does
-            schema: Pydantic model class defining the parameters
+            schema: Pydantic model defining the capability's parameters
             run: Function that implements the capability's behavior
-                 Takes a dict with 'args' and optional 'action', plus a list of messages
-                 Returns a string result or a coroutine that resolves to a string
+                Takes (agent, params, messages) as arguments
+                Returns a string or an awaitable that resolves to a string
         """
-        self.name = name
-        self.description = description
-        self.schema = schema
+        self._name = name
+        self._description = description
+        self._schema = schema
         self._run = run
-        self._agent = None
-        
-        # Validate schema
-        if not issubclass(schema, BaseModel):
-            raise ValueError("Schema must be a Pydantic model class")
-            
-        # Validate name
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Name must be a non-empty string")
-            
-        # Validate description
-        if not isinstance(description, str) or not description.strip():
-            raise ValueError("Description must be a non-empty string")
-            
-        # Validate run function
-        if not callable(run):
-            raise ValueError("Run must be a callable")
     
-    def bind_agent(self, agent):
-        """Bind the agent instance to this capability."""
-        self._agent = agent
-        return self
-            
-    async def run(self, params: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
-        """
-        Execute the capability.
-        
-        Args:
-            params: Dictionary containing:
-                - args: Arguments matching the schema
-                - action: Optional action context
-            messages: List of chat messages for context
-            
-        Returns:
-            String result from executing the capability
-            
-        Raises:
-            ValidationError: If args don't match schema
-            Exception: If execution fails
-        """
-        # Validate args against schema
-        args = params.get('args', {})
-        validated_args = self.schema.model_validate(args)
-        
-        # Call the run function with agent context if available
-        if self._agent:
-            result = self._run({"args": validated_args.model_dump(), "action": params.get("action")}, messages)
-        else:
-            result = self._run({"args": validated_args.model_dump(), "action": params.get("action")}, messages)
-        
-        # Handle both sync and async run functions
-        if isinstance(result, Awaitable):
-            result = await result
-            
-        return str(result)
-        
-    def __repr__(self) -> str:
-        """String representation of the capability."""
-        return f"Capability(name='{self.name}', description='{self.description}')"
+    @property
+    def name(self) -> str:
+        """The name of the capability."""
+        return self._name
+    
+    @property
+    def description(self) -> str:
+        """A description of what the capability does."""
+        return self._description
+    
+    @property
+    def schema(self) -> Type[T]:
+        """The Pydantic model that defines the parameters schema."""
+        return self._schema
+    
+    @property
+    def run(self) -> Callable[['Agent', CapabilityFuncParams[T], List[ChatCompletionMessageParam]], Union[str, Awaitable[str]]]:
+        """The function that implements the capability's behavior."""
+        return self._run

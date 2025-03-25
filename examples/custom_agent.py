@@ -1,49 +1,48 @@
 import os
+import asyncio
 from dotenv import load_dotenv
-from typing import Dict, Any
+import sys
+from pathlib import Path
 
+# Add the src directory to the Python path
+src_path = Path(__file__).parent.parent / "src"
+sys.path.insert(0, str(src_path))
+
+# Import from the local SDK
 from openserv_sdk import Agent, AgentOptions
-from openserv_sdk.types import RespondChatMessageAction
+from openserv_sdk.types import RespondChatMessageActionSchema
 
+# Load environment variables from .env file
 load_dotenv()
 
 class SophisticatedChatAgent(Agent):
-    """A custom agent implementation with specialized chat handling."""
+    """
+    A custom agent that overrides the default chat response behavior.
+    """
     
-    async def respond_to_chat(self, action: RespondChatMessageAction) -> None:
-        """Override the default chat response behavior."""
-        action.me.kind = "openserv"
-        await self.send_chat_message(
-            workspace_id=action.workspace.id,
-            agent_id=action.me.id,
-            message="Hello! I'm a sophisticated chat agent. I can help you with various tasks."
-        )
-
-async def create_custom_agent() -> Agent:
-    """Create and configure the custom agent."""
-    agent = SophisticatedChatAgent(
-        AgentOptions(
-            system_prompt="You are a helpful assistant.",
-            api_key=os.getenv('OPENSERV_API_KEY'),
-            openai_api_key=os.getenv('OPENAI_API_KEY'),
-            platform_url=os.getenv('OPENSERV_API_URL', 'https://api.openserv.ai'),
-            runtime_url=os.getenv('OPENSERV_RUNTIME_URL', 'https://agents.openserv.ai')
-        )
-    )
-    return agent
-
-if __name__ == '__main__':
-    import asyncio
-    
-    async def main():
-        agent = await create_custom_agent()
-        await agent.start()
+    async def respond_to_chat(self, action: RespondChatMessageActionSchema) -> None:
+        """
+        Override the default chat response behavior with custom logic.
         
-        try:
-            # Keep the agent running
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            await agent.stop()
+        Args:
+            action: The chat action to handle.
+        """
+        await self.send_chat_message({
+            "workspace_id": action.workspace.id,
+            "agent_id": action.me.id,
+            "message": "This is a custom message"
+        })
 
-    asyncio.run(main()) 
+# Create and start the agent in one step
+if __name__ == "__main__":
+    try:
+        asyncio.run(SophisticatedChatAgent(
+            options=AgentOptions(
+                system_prompt="You are a helpful assistant.",
+                api_key=os.environ.get("OPENSERV_API_KEY")
+            )
+        ).start())
+    except KeyboardInterrupt:
+        print("Agent stopped by user")
+    except Exception as e:
+        print(f"Error: {e}") 

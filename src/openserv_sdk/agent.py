@@ -1,989 +1,365 @@
-"""
-Agent implementation for OpenServ.
-"""
-
 import os
 import json
-import logging
-import asyncio
-import traceback
-from typing import Dict, Any, List, Optional, Union, TypeVar, Generic, Callable, Type, Awaitable, cast
-from pydantic import BaseModel
-import aiohttp
-import mimetypes
-from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Type, Union, TypeVar, cast
+from dataclasses import dataclass
 
-from openserv_sdk.config import Config, APIConfig, OpenAIConfig, ServerConfig
-from openserv_sdk.client import OpenServClient, RuntimeClient
-from openserv_sdk.server import AgentServer
-from openserv_sdk.capability import Capability
-from openserv_sdk.exceptions import ConfigurationError, RuntimeError, ToolError, AuthenticationError
-from openserv_sdk.types import (
-    AgentOptions, ProcessParams, RespondChatMessageAction,
-    TaskStatus, DoTaskAction, IntegrationCallRequest,
-    GetTasksParams, GetTaskDetailParams, GetAgentsParams,
-    UploadFileParams, SendChatMessageParams, CreateTaskParams, AddLogToTaskParams,
-    RequestHumanAssistanceParams, UpdateTaskStatusParams, GetFilesParams, UploadedFile,
-    GetSecretsParams, GetSecretValueParams, SecretCollection, SecretValue
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from pydantic import BaseModel
+import uvicorn
+from openai import AsyncOpenAI
+
+from .capability import Capability
+from .logger import logger
+from .schema_types import (
+    ActionSchema, DoTaskActionSchema, RespondChatMessageActionSchema, 
+    GetFilesParams, GetSecretsParams, GetSecretValueParams, UploadFileParams, 
+    MarkTaskAsErroredParams, CompleteTaskParams, SendChatMessageParams, 
+    GetTaskDetailParams, GetAgentsParams, GetTasksParams, CreateTaskParams, 
+    AddLogToTaskParams, RequestHumanAssistanceParams, UpdateTaskStatusParams, 
+    ProcessParams, IntegrationCallRequest, TaskStatus, ChatCompletionMessageParam,
+    ChatCompletionTool, ChatCompletion
 )
-from openserv_sdk.logger import logger
+
+# Default configuration
+PLATFORM_URL = os.environ.get('OPENSERV_API_URL', 'https://api.openserv.ai')
+RUNTIME_URL = os.environ.get('OPENSERV_RUNTIME_URL', 'https://agents.openserv.ai')
+DEFAULT_PORT = int(os.environ.get('PORT', '7378'))
+
+
+@dataclass
+class AgentOptions:
+    """
+    Configuration options for creating a new Agent instance.
+    
+    Attributes:
+        system_prompt: The system prompt that defines the agent's behavior and context.
+            Used as the initial system message in OpenAI chat completions.
+        
+        api_key: The OpenServ API key for authentication. 
+            Can also be provided via OPENSERV_API_KEY environment variable.
+            Required for all API operations.
+        
+        port: The port number for the agent's HTTP server. 
+            Defaults to 7378 if not specified.
+        
+        openai_api_key: The OpenAI API key for chat completions. 
+            Can also be provided via OPENAI_API_KEY environment variable.
+            Required when using the process() method.
+        
+        on_error: Error handler function for all agent operations. 
+            Defaults to logging the error if not provided.
+            Takes an error and optional context as parameters.
+    """
+    
+    system_prompt: str
+    """The system prompt that defines the agent's behavior and context."""
+    
+    api_key: Optional[str] = None
+    """The OpenServ API key for authentication. Can also be provided via OPENSERV_API_KEY environment variable."""
+    
+    port: Optional[int] = None
+    """The port number for the agent's HTTP server. Defaults to 7378 if not specified."""
+    
+    openai_api_key: Optional[str] = None
+    """The OpenAI API key for chat completions. Can also be provided via OPENAI_API_KEY environment variable."""
+    
+    on_error: Optional[Callable[[Exception, Optional[Dict[str, Any]]], None]] = None
+    """Error handler function for all agent operations. Defaults to logging the error if not provided."""
+
 
 T = TypeVar('T', bound=BaseModel)
 
-PLATFORM_URL = os.getenv('OPENSERV_API_URL', 'https://api.openserv.ai')
-RUNTIME_URL = os.getenv('OPENSERV_RUNTIME_URL', 'https://agents.openserv.ai')
-DEFAULT_PORT = int(os.getenv('PORT', '7378'))
 
 class Agent:
     """
-    Main Agent class that orchestrates the OpenServ Agent functionality.
+    Main Agent class for the OpenServ Python SDK.
     
-    This class handles:
-    - Configuration and initialization
-    - Tool/capability management
-    - API communication
-    - Task and chat message processing
-    - Server management
+    This class provides the core functionality for creating AI agents that can
+    execute tasks, chat with users, and integrate with the OpenServ platform.
     """
     
-    def __init__(self, options: AgentOptions) -> None:
+    def __init__(self, options: AgentOptions):
         """
-        Initialize the agent with options.
+        Creates a new Agent instance.
+        Sets up the FastAPI application, middleware, and routes.
+        Initializes API clients with appropriate authentication.
         
         Args:
             options: Configuration options for the agent
-                - api_key: OpenServ API key (can also be set via OPENSERV_API_KEY env var)
-                - system_prompt: System prompt that defines agent behavior
-                - openai_api_key: OpenAI API key (can also be set via OPENAI_API_KEY env var)
-                - port: Port for the agent server (default: 7378)
-                - host: Host for the agent server (default: '0.0.0.0')
-                - platform_url: URL for the OpenServ API (default: 'https://api.openserv.ai')
-                - runtime_url: URL for the OpenServ Runtime API (default: 'https://agents.openserv.ai')
-                - on_error: Error handler function
-        """
-        # Get API key from options or environment variable
-        api_key = options.api_key or os.getenv('OPENSERV_API_KEY')
-        if not api_key:
-            raise ConfigurationError("OpenServ API key is required. Provide it in options or set OPENSERV_API_KEY environment variable.")
-        
-        # Get OpenAI API key from options or environment variable
-        openai_api_key = options.openai_api_key or os.getenv('OPENAI_API_KEY')
-        
-        self.config = Config(
-            api=APIConfig(
-                api_key=api_key,
-                platform_url=options.platform_url or PLATFORM_URL,
-                runtime_url=options.runtime_url or RUNTIME_URL
-            ),
-            openai=OpenAIConfig(
-                api_key=openai_api_key,
-                model=options.model or "gpt-4"
-            ),
-            system_prompt=options.system_prompt,
-            port=options.port or DEFAULT_PORT,
-            host=options.host or '0.0.0.0',
-            log_level=options.log_level or 'info',
-            reload=options.reload or False,
-            on_error=options.on_error
-        )
-        
-        # Initialize private instance variables
-        self._api_client: Optional[OpenServClient] = None
-        self._runtime_client: Optional[RuntimeClient] = None
-        self._openai_client: Optional[Any] = None
-        self._server: Optional[AgentServer] = None
-        self._tools: List[Capability[BaseModel]] = []
-        
-        # Initialize clients
-        self.runtime_client = RuntimeClient(self.config.api)
-        self.api_client = OpenServClient(self.config.api)
-        
-        # Initialize server with enhanced config
-        self.server = AgentServer(ServerConfig(
-            host=self.config.host,
-            port=self.config.port,
-            debug=options.debug or False,
-            version=options.version or "1.0.0",
-            require_https=options.require_https or False,
-            trusted_hosts=options.trusted_hosts,
-            ssl_keyfile=options.ssl_keyfile,
-            ssl_certfile=options.ssl_certfile,
-            ssl_ca_certs=options.ssl_ca_certs,
-            workers=options.workers or 1,
-            limit_concurrency=options.limit_concurrency,
-            timeout_keep_alive=options.timeout_keep_alive or 5
-        ))
-        self.server.set_agent(self)
-        
-        logger.info(f"Agent initialized with system prompt: {self.config.system_prompt[:50]}...")
-        logger.info(f"Agent will listen on {self.config.host}:{self.config.port}")
-        
-    @property
-    def tools(self) -> List[Capability[BaseModel]]:
-        """Get the tools list."""
-        return self._tools
-
-    @tools.setter
-    def tools(self, value: List[Capability[BaseModel]]) -> None:
-        """Set the tools list."""
-        self._tools = value
-
-    @property
-    def server(self) -> Optional[AgentServer]:
-        """Get the server instance."""
-        return self._server
-
-    @server.setter
-    def server(self, value: Optional[AgentServer]) -> None:
-        """Set the server instance."""
-        self._server = value
-
-    @property
-    def openai_client(self) -> Optional[Any]:
-        """Get the OpenAI client instance."""
-        return self._openai_client
-
-    @openai_client.setter
-    def openai_client(self, value: Optional[Any]) -> None:
-        """Set the OpenAI client instance."""
-        self._openai_client = value
-
-    @property
-    def api_client(self) -> OpenServClient:
-        """Get the API client instance."""
-        if not self._api_client:
-            self._api_client = OpenServClient(self.config.api)
-        return self._api_client
-
-    @api_client.setter
-    def api_client(self, client: OpenServClient) -> None:
-        """Set the API client instance (for testing)."""
-        self._api_client = client
-
-    @property
-    def runtime_client(self) -> RuntimeClient:
-        """Get the runtime client instance."""
-        if not self._runtime_client:
-            self._runtime_client = RuntimeClient(self.config.api)
-        return self._runtime_client
-
-    @runtime_client.setter
-    def runtime_client(self, client: RuntimeClient) -> None:
-        """Set the runtime client instance (for testing)."""
-        self._runtime_client = client
-
-    @property
-    def openai_tools(self) -> List[Dict[str, Any]]:
-        """Convert tools to OpenAI function format."""
-        return [{
-            'type': 'function',
-            'function': {
-                'name': tool.name,
-                'description': tool.description,
-                'parameters': tool.schema.model_json_schema()
-            }
-        } for tool in self.tools]
-
-    def add_capability(self, capability: Union[Capability[T], Dict[str, Any]]) -> 'Agent':
-        """
-        Add a capability to the agent.
-        
-        Args:
-            capability: Either a Capability object or a dictionary with capability properties
-                If a dictionary, must contain: name, description, schema, run
-                
-        Returns:
-            The agent instance for chaining
             
         Raises:
-            ValueError: If capability with the same name already exists or if dictionary is missing required keys
+            ValueError: If OpenServ API key is not provided in options or environment
         """
-        # If capability is a dictionary, convert it to a Capability object
-        if isinstance(capability, dict):
-            required_keys = ['name', 'description', 'schema', 'run']
-            missing_keys = [key for key in required_keys if key not in capability]
-            if missing_keys:
-                raise ValueError(f"Missing required keys in capability dictionary: {missing_keys}")
-                
-            capability = Capability(
+        self.app = FastAPI(title="OpenServ Agent")
+        self.port = options.port or DEFAULT_PORT
+        self.system_prompt = options.system_prompt
+        self.api_key = options.api_key or os.environ.get('OPENSERV_API_KEY', '')
+        self.options = options
+        self.tools: List[Capability] = []
+        self._openai: Optional[AsyncOpenAI] = None
+        self.server = None
+
+        if not self.api_key:
+            raise ValueError(
+                'OpenServ API key is required. Please provide it in options or set OPENSERV_API_KEY environment variable.'
+            )
+
+        # Add middleware
+        self.app.add_middleware(GZipMiddleware)
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        # Initialize API clients
+        self.api_client = httpx.AsyncClient(
+            base_url=PLATFORM_URL,
+            headers={
+                'Content-Type': 'application/json',
+                'x-openserv-key': self.api_key
+            },
+            timeout=60.0
+        )
+
+        # Initialize runtime client
+        self.runtime_client = httpx.AsyncClient(
+            base_url=RUNTIME_URL,
+            headers={
+                'Content-Type': 'application/json',
+                'x-openserv-key': self.api_key
+            },
+            timeout=60.0
+        )
+
+        # Set up routes
+        self._setup_routes()
+    
+    @property
+    def openai_tools(self) -> List[ChatCompletionTool]:
+        """
+        Getter that converts the agent's tools into OpenAI function calling format.
+        Used when making chat completion requests to OpenAI.
+        
+        Returns:
+            List of ChatCompletionTool objects
+        """
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.schema.model_json_schema()
+                }
+            }
+            for tool in self.tools
+        ]
+    
+    @property
+    def openai(self) -> AsyncOpenAI:
+        """
+        Getter that provides access to the OpenAI client instance.
+        Lazily initializes the client with the API key from options or environment.
+        
+        Raises:
+            ValueError: If no OpenAI API key is available
+            
+        Returns:
+            The OpenAI client instance
+        """
+        if not self._openai:
+            api_key = self.options.openai_api_key or os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError(
+                    'OpenAI API key is required for process(). Please provide it in options or set OPENAI_API_KEY environment variable.'
+                )
+            self._openai = AsyncOpenAI(api_key=api_key)
+        return self._openai
+    
+    async def add_log_to_task(self, params: AddLogToTaskParams) -> Dict[str, Any]:
+        """
+        Adds a log entry to a task.
+        
+        Args:
+            params: Parameters for adding the log
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task to add the log to
+            params.severity: Severity level of the log ('info', 'warning', 'error')
+            params.type: Type of log entry ('text', 'openai-message')
+            params.body: Content of the log entry (string or object)
+            
+        Returns:
+            The created log entry details
+        """
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/log",
+            json={
+                "severity": params.severity,
+                "type": params.type,
+                "body": params.body
+            }
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in add_log_to_task: {str(e)}")
+            return {"success": True, "message": "Log added to task (response could not be parsed)"}
+    
+    def add_capability(self, *, name: str, description: str, schema: Type[BaseModel], run: Callable) -> 'Agent':
+        """
+        Adds a single capability (tool) to the agent.
+        Each capability must have a unique name and defines a function that can be called via the API.
+        
+        Example:
+            ```python
+            from pydantic import BaseModel
+            
+            class SearchParams(BaseModel):
+                query: str
+                limit: int = 10
+            
+            agent.add_capability(
+                name="search",
+                description="Search for information",
+                schema=SearchParams,
+                run=lambda params, messages: f"Searching for: {params.args.query}"
+            )
+            ```
+        
+        Args:
+            name: Unique name for the capability
+                Used to identify the tool in API calls and OpenAI function calls
+            description: Description of what the capability does
+                Used by OpenAI to understand when to use this tool
+            schema: Pydantic model defining the capability's parameters
+                Must be a subclass of BaseModel
+                Defines the expected input structure
+            run: Function that implements the capability's behavior
+                Takes params (dict with 'args' and optional 'action') and messages list
+                Returns a string or dict that will be JSON serialized
+        
+        Returns:
+            The agent instance for method chaining
+        
+        Raises:
+            ValueError: If a capability with the same name already exists
+        """
+        # Validate tool name uniqueness
+        if any(tool.name == name for tool in self.tools):
+            raise ValueError(f'Tool with name "{name}" already exists')
+        
+        # Create and add capability
+        self.tools.append(Capability(name=name, description=description, schema=schema, run=run))
+        return self
+    
+    def add_capabilities(self, capabilities: List[Dict]) -> 'Agent':
+        """
+        Adds multiple capabilities (tools) to the agent at once.
+        Each capability must have a unique name and not conflict with existing capabilities.
+        
+        Args:
+            capabilities: List of capability configurations with name, description, schema, and run function
+            
+        Returns:
+            The agent instance for method chaining
+        """
+        for capability in capabilities:
+            self.add_capability(
                 name=capability['name'],
                 description=capability['description'],
                 schema=capability['schema'],
                 run=capability['run']
             )
-            
-        # Check for duplicate name
-        if any(tool.name == capability.name for tool in self._tools):
-            raise ValueError(f"Duplicate capability name: {capability.name}")
-            
-        # Bind the agent to the capability
-        capability.bind_agent(self)
-        
-        # Add the capability to the tools list
-        self._tools.append(capability)
-        
-        logger.info(f"Added capability: {capability.name}")
         return self
-
-    def add_capabilities(self, capabilities: List[Union[Capability[T], Dict[str, Any]]]) -> 'Agent':
-        """Add multiple capabilities at once."""
-        for capability in capabilities:
-            self.add_capability(capability)
-        return self
-        
-    def capability(self, name: str = None, description: str = None, schema: type[BaseModel] = None):
+    
+    async def call_integration(self, integration: IntegrationCallRequest) -> Dict[str, Any]:
         """
-        Decorator for adding a capability to the agent.
+        Calls an integration endpoint through the OpenServ platform.
+        This method allows agents to interact with external services and APIs that are integrated with OpenServ.
         
-        Example:
-            @agent.capability(name="greet", description="Greet a user", schema=GreetSchema)
-            async def greet(params: dict, messages: list) -> str:
-                name = params["args"]["name"]
-                return f"Hello, {name}!"
-                
         Args:
-            name: Name of the capability (defaults to function name if not provided)
-            description: Optional description of the capability
-            schema: Optional Pydantic model class for parameter validation
+            integration: The integration request parameters
+            integration.workspace_id: ID of the workspace where the integration is configured
+            integration.integration_id: ID of the integration to call
+            integration.details: Details of the integration call
+            integration.details.endpoint: The endpoint to call on the integration
+            integration.details.method: The HTTP method to use (GET, POST, etc.)
+            integration.details.data: Optional data payload for the request
             
         Returns:
-            Decorator function
+            The response from the integration endpoint
         """
-        def decorator(func):
-            # Use function name if name not provided
-            capability_name = name or func.__name__
-            
-            # If no description is provided, use the function's docstring
-            func_description = description or func.__doc__ or f"Execute the {capability_name} capability"
-            
-            # Use provided schema or create a default one
-            schema_class = schema
-            
-            if schema_class is None:
-                # Create a dynamic schema class
-                class DynamicSchema(BaseModel):
-                    pass
-                
-                schema_class = DynamicSchema
-            
-            # Create and add the capability
-            capability = Capability(
-                name=capability_name,
-                description=func_description,
-                schema=schema_class,
-                run=func
-            )
-            self.add_capability(capability)
-            return func
-        return decorator
-
-    def handle_error(self, error: Exception, context: Dict[str, Any] = None) -> None:
-        """
-        Handle errors by logging and calling the error handler if provided.
-        
-        This method logs the error and calls the custom error handler if provided.
-        It ensures that all errors are properly logged and handled.
-        
-        Args:
-            error: The exception that occurred
-            context: Additional context about where the error occurred
-        """
-        # Prepare error message with context
-        error_message = f"Error: {str(error)}"
-        if context:
-            context_str = ", ".join(f"{k}={v}" for k, v in context.items() if k != "action")
-            error_message += f" (Context: {context_str})"
-            
-        # Log the error with traceback
-        logger.error(error_message, exc_info=True)
-        
-        # Call custom error handler if provided
-        if self.config.on_error:
-            try:
-                self.config.on_error(error, context)
-            except Exception as handler_error:
-                logger.error(f"Error handler failed: {str(handler_error)}", exc_info=True)
-
-    async def process(self, params: ProcessParams) -> Dict[str, Any]:
-        """
-        Process a request using the OpenAI API.
-        
-        This method sends messages to OpenAI with the agent's capabilities as tools,
-        handles any tool calls that are returned, and returns the final response.
-        
-        Args:
-            params: ProcessParams object containing:
-                - messages: List of chat messages to process
-                - action: Optional action context
-            
-        Returns:
-            Response from OpenAI API after processing all tool calls
-            
-        Raises:
-            RuntimeError: If OpenAI API call fails or returns an empty response
-            ConfigurationError: If OpenAI API key is not provided
-        """
-        if not self.config.openai.api_key:
-            raise ConfigurationError("OpenAI API key is required for process method. Provide it in options or set OPENAI_API_KEY environment variable.")
-            
+        response = await self.api_client.post(
+            f"/workspaces/{integration.workspace_id}/integration/{integration.integration_id}/proxy",
+            json=integration.details.model_dump()
+        )
+        response.raise_for_status()
         try:
-            # Import OpenAI here to make it optional
-            try:
-                from openai import AsyncOpenAI
-            except ImportError:
-                raise ImportError(
-                    "The 'openai' package is required to use the process method. "
-                    "Install it with 'pip install \"openserv-sdk[openai]\"' or 'pip install openai==0.28.1'"
-                )
-                
-            if not self.openai_client:
-                # Initialize OpenAI client with compatibility for different versions
-                try:
-                    # For newer versions of OpenAI package
-                    self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
-                except TypeError as e:
-                    if "unexpected keyword argument 'proxies'" in str(e):
-                        # For newer versions that don't support proxies
-                        logger.info("Using OpenAI client without proxies")
-                        self.openai_client = AsyncOpenAI(
-                            api_key=self.config.openai.api_key,
-                            base_url="https://api.openai.com/v1"
-                        )
-                    else:
-                        # Try older initialization format for OpenAI < 1.0.0
-                        logger.info("Falling back to older OpenAI client initialization")
-                        from openai import AsyncOpenAI as LegacyAsyncOpenAI
-                        self.openai_client = LegacyAsyncOpenAI(api_key=self.config.openai.api_key)
-                
-            # Prepare messages
-            messages = params.messages.copy()
-            
-            # Add system prompt if provided and not already in messages
-            if self.config.system_prompt and not any(msg.get('role') == 'system' for msg in messages):
-                messages.insert(0, {"role": "system", "content": self.config.system_prompt})
-                
-            # Prepare tools for OpenAI API
-            tools = self.openai_tools if self.tools else None
-            
-            # Maximum number of iterations for tool calls
-            max_iterations = 10
-            iteration_count = 0
-            
-            while iteration_count < max_iterations:
-                iteration_count += 1
-                logger.debug(f"Process iteration {iteration_count}/{max_iterations}")
-                
-                # Call OpenAI API
-                response = await self.openai_client.chat.completions.create(
-                    model=self.config.openai.model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto" if tools else None
-                )
-                
-                if not response or not response.choices:
-                    raise RuntimeError("Empty response from OpenAI API")
-                    
-                choice = response.choices[0]
-                message = choice.message
-                
-                # If no tool calls, return the message
-                if not message.tool_calls:
-                    return message.model_dump()
-                
-                # Handle tool calls
-                tool_results = []
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call.function.name
-                    try:
-                        # Parse arguments
-                        arguments = json.loads(tool_call.function.arguments)
-                        
-                        # Call the tool
-                        result = await self._handle_tool_call(
-                            {"name": tool_name, "arguments": arguments},
-                            messages
-                        )
-                        
-                        tool_results.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_name,
-                            "content": result
-                        })
-                    except Exception as e:
-                        logger.error(f"Error calling tool {tool_name}: {str(e)}")
-                        tool_results.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_name,
-                            "content": f"Error: {str(e)}"
-                        })
-                
-                # Add assistant message and tool results to messages
-                messages.append(message.model_dump())
-                messages.extend(tool_results)
-            
-            # If we've reached the maximum number of iterations, return the last message
-            raise RuntimeError(f"Reached maximum number of iterations ({max_iterations}) without resolution")
-            
+            return response.json()
         except Exception as e:
-            logger.error(f"Error processing request: {str(e)}")
-            self.handle_error(e, {"messages": params.messages})
-            raise RuntimeError(f"Failed to process request: {str(e)}") from e
-
-    async def _handle_tool_call(self, tool_call: Any, messages: List[Dict[str, str]]) -> str:
+            logger.error(f"Error parsing JSON response in call_integration: {str(e)}")
+            return {"success": True, "message": "Integration called (response could not be parsed)"}
+    
+    async def complete_task(self, params: CompleteTaskParams) -> Dict[str, Any]:
         """
-        Handle a tool call from OpenAI API.
+        Completes a task with the specified output.
         
         Args:
-            tool_call: Tool call object from OpenAI API
-            messages: List of messages for context
+            params: Parameters for completing the task
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task to complete
+            params.output: The output content to set for the task
             
         Returns:
-            Result of tool execution as string
-            
-        Raises:
-            ToolError: If tool execution fails
+            The completed task details
         """
-        tool_name = tool_call["name"]
-        arguments = tool_call["arguments"]
+        logger.info(f"Completing task {params.task_id} in workspace {params.workspace_id}")
         
-        # Find the tool
-        tool = next((t for t in self._tools if t.name == tool_name), None)
-        if not tool:
-            raise ToolError(tool_name, f"Tool not found: {tool_name}")
-            
-        try:
-            # Execute the tool
-            result = await tool.run(
-                {"args": arguments, "action": None},
-                messages
-            )
-            return result
-        except Exception as e:
-            logger.error(f"Error executing tool {tool_name}: {str(e)}")
-            self.handle_error(e, {"tool": tool_name, "arguments": arguments})
-            raise ToolError(tool_name, str(e), e)
-
-    async def handle_tool_route(self, tool_name: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Handle a tool route request.
+        response = await self.api_client.put(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/complete",
+            json={"output": params.output}
+        )
+        response.raise_for_status()
         
-        This method processes a request to execute a specific tool/capability.
-        It validates the tool exists, extracts arguments and messages, and executes the tool.
+        # Log the response status for debugging
+        logger.info(f"Task completion API response status: {response.status_code}")
         
-        Args:
-            tool_name: Name of the tool to execute
-            body: Request body containing arguments and messages
-            
-        Returns:
-            Dictionary containing the tool execution result
-            
-        Raises:
-            ToolError: If tool execution fails or tool not found
-        """
-        logger.info(f"Handling tool route: {tool_name}")
-        
-        try:
-            # Extract arguments and messages
-            args = body.get("args", {})
-            messages = body.get("messages", [])
-            action = body.get("action")
-            
-            logger.debug(f"Tool arguments: {json.dumps(args, indent=2)}")
-            logger.debug(f"Messages count: {len(messages)}")
-            
-            # Find the tool
-            tool = next((t for t in self._tools if t.name == tool_name), None)
-            if not tool:
-                error_msg = f"Tool not found: {tool_name}"
-                logger.error(error_msg)
-                raise ToolError(tool_name, error_msg)
-                
-            # Execute the tool
-            logger.info(f"Executing tool: {tool_name}")
-            result = await tool.run(
-                {"args": args, "action": action},
-                messages
-            )
-            
-            logger.info(f"Tool execution successful: {result[:50]}...")
-            return {"result": result}
-            
-        except ToolError as e:
-            # Re-raise ToolError instances
-            logger.error(f"Tool error: {str(e)}")
-            self.handle_error(e, {"tool": tool_name, "body": body})
-            raise
-            
-        except Exception as e:
-            # Wrap other exceptions in ToolError
-            logger.error(f"Error handling tool route {tool_name}: {str(e)}")
-            self.handle_error(e, {"tool": tool_name, "body": body})
-            raise ToolError(tool_name, str(e), e)
-
-    async def handle_root_route(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Handle a root route request.
-        
-        This method processes incoming requests to the root endpoint of the agent server.
-        It determines the action type and dispatches to the appropriate handler.
-        
-        Args:
-            body: Request body containing action type and parameters
-            
-        Returns:
-            Response object with status and any relevant data
-            
-        Raises:
-            RuntimeError: If action execution fails or action type is unknown
-        """
-        try:
-            # Extract action from the request body
-            if "action" not in body:
-                raise RuntimeError("Missing 'action' field in request body")
-                
-            action = body["action"]
-            if not isinstance(action, dict):
-                raise RuntimeError("'action' must be an object")
-                
-            # Extract action type
-            action_type = action.get("type")
-            if not action_type:
-                raise RuntimeError("Missing 'type' field in action")
-                
-            # Handle different action types
-            if action_type == "do-task":
-                # Create a background task to handle the request
-                asyncio.create_task(
-                    self.do_task(action),
-                    name=f"task_{action.get('task', {}).get('id', 'unknown')}"
-                )
-                return {"status": "ok", "message": "Task processing started"}
-                
-            elif action_type == "respond-chat-message":
-                # Create a background task to handle the request
-                asyncio.create_task(
-                    self.respond_to_chat(action),
-                    name=f"chat_{action.get('messages', [{}])[-1].get('id', 'unknown')}"
-                )
-                return {"status": "ok", "message": "Chat response processing started"}
-                
-            else:
-                raise RuntimeError(f"Unknown action type: {action_type}")
-                
-        except Exception as e:
-            logger.error(f"Error handling root route: {str(e)}")
-            self.handle_error(e, {"body": body})
-            raise RuntimeError(f"Failed to handle request: {str(e)}") from e
-
-    async def start(self) -> None:
-        """Start the agent server."""
-        logger.info(f"Starting agent server on {self.config.host}:{self.config.port}")
-        await self.server.start()
-
-    async def stop(self) -> None:
-        """Stop the agent server."""
-        logger.info("Stopping agent server")
-        await self.server.stop()
-
-    async def do_task(self, action: DoTaskAction) -> None:
-        """
-        Handle a task execution request.
-        
-        This method processes a task execution request from the OpenServ platform.
-        It updates the task status, executes the task, and handles any errors.
-        
-        Args:
-            action: DoTaskAction object containing task details and context
-            
-        Raises:
-            RuntimeError: If task execution fails
-        """
-        if not action.task or not action.task.id:
-            logger.error("Invalid task in action")
-            return
-            
-        logger.info(f"Processing task: {action.task.description}")
-        logger.info(f"Task ID: {action.task.id}")
-        logger.info(f"Workspace ID: {action.workspace.id}")
-
-        try:
-            # Update status to in-progress
+        # Check if response has content before trying to parse it
+        if response.content and len(response.content.strip()) > 0:
             try:
-                logger.info(f"Setting task {action.task.id} status to IN_PROGRESS")
-                await self.update_task_status(UpdateTaskStatusParams(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    status=TaskStatus.IN_PROGRESS
-                ))
-            except Exception as status_error:
-                logger.warning(f"Failed to update task status: {str(status_error)}")
-
-            # Prepare initial messages
-            messages = []
-            
-            # Add system prompt if provided
-            if self.config.system_prompt:
-                messages.append({
-                    'role': 'system',
-                    'content': self.config.system_prompt
-                })
-
-            # Add task description as user message
-            if action.task.description:
-                messages.append({
-                    'role': 'user',
-                    'content': action.task.description
-                })
-                
-            # Add task body if provided
-            if action.task.body:
-                messages.append({
-                    'role': 'user',
-                    'content': action.task.body
-                })
-
-            # Execute the task and let the runtime handle the response
-            logger.info(f"Executing task {action.task.id}")
-            
-            tools_json = [self._convert_tool_to_json_schema(t) for t in self._tools]
-            action_data = action.model_dump()
-            
-            logger.debug(f"Tools JSON: {json.dumps(tools_json, indent=2)}")
-            logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
-            logger.debug(f"Action data: {json.dumps(action_data, indent=2)}")
-
-            try:
-                await self._runtime_client.execute_task(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    tools=tools_json,
-                    messages=messages,
-                    action=action_data
-                )
-                logger.info(f"Task {action.task.id} execution request sent successfully")
-            except Exception as exec_error:
-                logger.error(f"Task execution failed: {str(exec_error)}")
-                await self.mark_task_as_errored(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    error=str(exec_error)
-                )
-                raise RuntimeError(f"Failed to execute task: {str(exec_error)}") from exec_error
-
-        except Exception as error:
-            logger.error(f"Task {action.task.id} execution failed with error: {str(error)}")
-            logger.error(f"Stack trace: {traceback.format_exc()}")
-
-            try:
-                await self.mark_task_as_errored(
-                    workspace_id=action.workspace.id,
-                    task_id=action.task.id,
-                    error=str(error)
-                )
-            except Exception as mark_error:
-                logger.error(f"Failed to mark task as errored: {str(mark_error)}")
-            
-            self.handle_error(error, {"context": "task_execution", "action": action})
-            raise RuntimeError(f"Task execution failed: {str(error)}") from error
-
-    @staticmethod
-    def _convert_tool_to_json_schema(tool: Capability[BaseModel]) -> Dict[str, Any]:
-        """
-        Convert a tool to JSON schema format for OpenAI API.
-        
-        This method converts a Capability object to the JSON schema format
-        required by the OpenAI API for function calling.
-        
-        Args:
-            tool: The Capability object to convert
-            
-        Returns:
-            Dictionary containing the tool's JSON schema
-        """
-        schema = tool.schema.model_json_schema()
-        
-        # Clean up schema for OpenAI
-        # Remove title from schema if present
-        if "title" in schema:
-            del schema["title"]
-            
-        # Remove title from properties if present
-        if "properties" in schema and isinstance(schema["properties"], dict):
-            for prop in schema["properties"].values():
-                if isinstance(prop, dict) and "title" in prop:
-                    del prop["title"]
-                    
-        # Ensure required field is present
-        if "required" not in schema:
-            schema["required"] = []
-            
-        return {
-            'name': tool.name,
-            'description': tool.description,
-            'parameters': schema
-        }
-
-    async def respond_to_chat(self, action: RespondChatMessageAction) -> None:
-        """
-        Respond to a chat message.
-        
-        This method processes a chat message from the OpenServ platform and generates a response.
-        It uses the agent's capabilities and the OpenAI API to generate the response.
-        
-        Args:
-            action: RespondChatMessageAction object containing message details and context
-            
-        Raises:
-            RuntimeError: If chat response generation fails
-        """
-        if not action.messages or len(action.messages) == 0:
-            logger.error("No messages in action")
-            return
-            
-        logger.info(f"Responding to chat in workspace {action.workspace.id}")
-        logger.info(f"Agent ID: {action.me.id}")
-        logger.info(f"Message count: {len(action.messages)}")
-        
-        try:
-            # Prepare messages for processing
-            messages = []
-            
-            # Add system prompt if provided
-            if self.config.system_prompt:
-                messages.append({
-                    'role': 'system',
-                    'content': self.config.system_prompt
-                })
-                
-            # Add chat messages
-            for msg in action.messages:
-                role = 'assistant' if msg.sender_id == action.me.id else 'user'
-                messages.append({
-                    'role': role,
-                    'content': msg.message
-                })
-            
-            # Process the messages
-            result = await self.process(ProcessParams(
-                messages=messages,
-                action=action
-            ))
-            
-            # Extract the response content
-            response_content = result.get('content', '')
-            if not response_content:
-                logger.warning("Empty response content from process method")
-                response_content = "I'm sorry, I couldn't generate a response."
-                
-            # Send the response
-            logger.info(f"Sending chat response: {response_content[:50]}...")
-            await self.api_client.send_chat_message(
-                workspace_id=action.workspace.id,
-                agent_id=action.me.id,
-                message=response_content
-            )
-            logger.info("Chat response sent successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to respond to chat: {str(e)}")
-            self.handle_error(e, {
-                "action": action,
-                "context": "respond_to_chat"
-            })
-            
-            # Send error message to chat
-            try:
-                await self.api_client.send_chat_message(
-                    workspace_id=action.workspace.id,
-                    agent_id=action.me.id,
-                    message=f"I'm sorry, I encountered an error: {str(e)}"
-                )
-            except Exception as send_error:
-                logger.error(f"Failed to send error message: {str(send_error)}")
-
-    def convert_to_openai_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert tools to OpenAI format."""
-        openai_tools = []
-        for tool in tools:
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["parameters"]
-                }
-            }
-            openai_tools.append(openai_tool)
-        return openai_tools
-
-    async def get_files(self, workspace_id: Union[int, GetFilesParams]) -> Dict[str, Any]:
-        """Get files in a workspace."""
-        if isinstance(workspace_id, GetFilesParams):
-            params = workspace_id
+                return response.json()
+            except Exception as e:
+                logger.error(f"Error parsing JSON response in complete_task: {str(e)}")
+                return {"success": True, "message": "Task completed successfully"}
         else:
-            params = GetFilesParams(workspace_id=workspace_id)
-
-        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/files")
-        return response["data"]
-
-    async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
-        """Upload a file to a workspace."""
-        data = aiohttp.FormData()
-        data.add_field('path', params.path)
-        if params.task_ids is not None:
-            data.add_field('taskIds', json.dumps(params.task_ids))
-        if params.skip_summarizer is not None:
-            data.add_field('skipSummarizer', str(params.skip_summarizer).lower())
-        
-        # Handle both string and bytes file content
-        content_type = params.content_type or (
-            mimetypes.guess_type(params.path)[0] or 'application/octet-stream'
-        )
-        
-        if isinstance(params.file, str):
-            data.add_field('file', params.file.encode(), 
-                          filename=params.path,
-                          content_type=content_type)
-        else:
-            data.add_field('file', params.file, 
-                          filename=params.path,
-                          content_type=content_type)
-
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/file",
-            data=data
-        )
-        return response["data"]
-
-    async def get_file_content(self, workspace_id: int, file_id: str) -> bytes:
-        """Get file content as bytes."""
-
-        response = await self.api_client.get(f"/workspaces/{workspace_id}/file/{file_id}/content")
-
-        if isinstance(response, dict) and "data" in response:
-            return response["data"]
-        return response
-
-    async def save_output_file(self, workspace_id: int, file_name: str, content: Union[str, bytes], task_id: Optional[int] = None) -> str:
-        """Save an output file and return its access URL."""
-        params = UploadFileParams(
-            workspace_id=workspace_id,
-            path=file_name,
-            file=content,
-            task_ids=[task_id] if task_id else None
-        )
-        result = await self.upload_file(params)
-        return result["url"]
-
-    async def read_file_content(self, workspace_id: int, file_id: str, encoding: Optional[str] = None) -> Union[str, bytes]:
-        """Read content from an uploaded file.
-        
-        Args:
-            workspace_id: ID of the workspace containing the file
-            file_id: ID of the file to read
-            encoding: Optional encoding to use for text files (e.g., 'utf-8')
-        
-        Returns:
-            str if encoding is provided, bytes otherwise
-        """
-        content = await self.get_file_content(workspace_id=workspace_id, file_id=file_id)
-        if encoding:
-            return content.decode(encoding)
-        return content
-
-    async def get_tasks(self, workspace_id: Union[int, GetTasksParams]) -> Dict[str, Any]:
-        """Gets a list of tasks in a workspace."""
-        if isinstance(workspace_id, GetTasksParams):
-            params = workspace_id
-        else:
-            params = GetTasksParams(workspace_id=workspace_id)
-
-        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/tasks")
-        return response["data"]
-
-    async def mark_task_as_errored(self, workspace_id: int, task_id: int, error: str) -> None:
-        """
-        Mark a task as errored.
-        
-        This method updates the task status to ERROR and sets the error message.
-        It handles 404 errors gracefully, as the task might have been deleted or moved.
-        
-        Args:
-            workspace_id: ID of the workspace containing the task
-            task_id: ID of the task to mark as errored
-            error: Error message to set
-            
-        Raises:
-            APIError: If the API request fails (except for 404 errors)
-        """
-        try:
-            await self._api_client.mark_task_as_errored(
-                workspace_id=workspace_id,
-                task_id=task_id,
-                error=error
-            )
-            logger.info(f"Task {task_id} marked as errored")
-        except Exception as e:
-            # If it's a 404 error, log it but don't raise
-            if "404 Not Found" in str(e):
-                logger.warning(f"Failed to mark task as errored: {str(e)}")
-            else:
-                logger.error(f"Failed to mark task as errored: {str(e)}")
-                self.handle_error(e, {
-                    "workspace_id": workspace_id,
-                    "task_id": task_id,
-                    "error": error
-                })
-
-    async def complete_task(self, workspace_id: int, task_id: int, output: str) -> Dict[str, Any]:
-        """Complete a task."""
-        response = await self._api_client.post(
-            f"/workspaces/{workspace_id}/task/{task_id}/complete",
-            {"output": output}
-        )
-        return response["data"]
-
-    async def send_chat_message(self, workspace_id: int, agent_id: int, message: str) -> Dict[str, Any]:
-        """Send a chat message."""
-        params = SendChatMessageParams(
-            workspace_id=workspace_id,
-            agent_id=agent_id,
-            message=message
-        )
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/agent-chat/{params.agent_id}/message",
-            {"message": params.message}
-        )
-        return response["data"]
-
-    async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
-        """Requests human assistance for a task."""
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/task/{params.task_id}/human-assistance",
-            {
-                "type": params.type,
-                "question": params.question,
-                "agentDump": params.agent_dump
-            }
-        )
-        return response["data"]
-
-    async def get_task_detail(self, params: GetTaskDetailParams) -> Dict[str, Any]:
-        """Gets detailed information about a specific task."""
-        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/task/{params.task_id}/detail")
-        return response["data"]
-
-    async def get_agents(self, params: GetAgentsParams) -> Dict[str, Any]:
-        """Gets a list of agents in a workspace."""
-        response = await self._api_client.get(f"/workspaces/{params.workspace_id}/agents")
-        return response["data"]
-
+            logger.info(f"Task {params.task_id} completed successfully (empty response)")
+            return {"success": True, "message": "Task completed successfully"}
+    
     async def create_task(self, params: CreateTaskParams) -> Dict[str, Any]:
-        """Creates a new task in a workspace."""
-        response = await self._api_client.post(f"/workspaces/{params.workspace_id}/task", {
+        """
+        Creates a new task in a workspace.
+        
+        Args:
+            params: Parameters for creating the task
+            params.workspace_id: ID of the workspace to create the task in
+            params.assignee: ID of the agent to assign the task to
+            params.description: Short description of the task
+            params.body: Detailed body content of the task
+            params.input: Input data for the task
+            params.expected_output: Expected output format or content
+            params.dependencies: List of task IDs that this task depends on
+            
+        Returns:
+            The created task details
+        """
+        response = await self.api_client.post(f"/workspaces/{params.workspace_id}/task", json={
             "assignee": params.assignee,
             "description": params.description,
             "body": params.body,
@@ -991,111 +367,675 @@ class Agent:
             "expectedOutput": params.expected_output,
             "dependencies": params.dependencies
         })
-        return response["data"]
-
-    async def add_log_to_task(self, params: AddLogToTaskParams) -> Dict[str, Any]:
-        """Adds a log entry to a task."""
-        response = await self._api_client.post(
-            f"/workspaces/{params.workspace_id}/task/{params.task_id}/log",
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in create_task: {str(e)}")
+            return {"success": True, "message": "Task created (response could not be parsed)"}
+    
+    async def do_task(self, action: DoTaskActionSchema):
+        """
+        Handle a task execution request.
+        This method can be overridden by extending classes to customize task handling.
+        
+        Args:
+            action: The task action to handle
+            action.task: The task details including description, body, etc.
+            action.workspace: The workspace context where the task is running
+            action.me: Information about the current agent
+        """
+        messages: List[ChatCompletionMessageParam] = [
             {
-                "severity": params.severity,
-                "type": params.type,
-                "body": params.body
+                "role": "system",
+                "content": self.system_prompt
             }
-        )
-        return response["data"]
+        ]
 
-    async def update_task_status(self, params: UpdateTaskStatusParams) -> Optional[Dict[str, Any]]:
-        """
-        Update the status of a task.
-        
-        This method updates the task status and handles errors gracefully.
-        
-        Args:
-            params: UpdateTaskStatusParams object containing:
-                - workspace_id: ID of the workspace containing the task
-                - task_id: ID of the task to update
-                - status: New status for the task
-                
-        Returns:
-            Response from the API or None if the request fails
-            
-        Raises:
-            No exceptions are raised, errors are logged
-        """
-        try:
-            response = await self._api_client.update_task_status(params)
-            logger.info(f"Task {params.task_id} status updated to {params.status}")
-            return response
-        except Exception as e:
-            logger.error(f"Failed to update task status: {str(e)}")
-            self.handle_error(e, {"params": params.model_dump()})
-            return None
-
-    async def call_integration(self, integration: IntegrationCallRequest) -> Dict[str, Any]:
-        """
-        Calls an integration endpoint through the OpenServ platform.
-        This method allows agents to interact with external services and APIs that are integrated with OpenServ.
-        """
-        response = await self._api_client.post(
-            f"/workspaces/{integration.workspace_id}/integration/{integration.integration_id}/proxy",
-            integration.details.model_dump()
-        )
-        return response["data"]
-
-    async def get_secrets(self, params: Union[int, GetSecretsParams]) -> Dict[str, Any]:
-        """
-        Get secrets from a workspace collection.
-        
-        Args:
-            params: Either a workspace ID or GetSecretsParams object
-            
-        Returns:
-            Dictionary containing the secrets collection data
-            
-        Raises:
-            APIError: If the API request fails
-            AuthenticationError: If authentication fails
-        """
-        if isinstance(params, int):
-            params = GetSecretsParams(workspace_id=params)
-
-        url = f"/workspaces/{params.workspace_id}/secrets"
-        if params.collection_id:
-            url += f"/{params.collection_id}"
-
-        try:
-            response = await self.api_client.get(url)
-            return SecretCollection(**response["data"]).model_dump()
-        except Exception as e:
-            self.handle_error(e, {
-                "params": params.model_dump(),
-                "context": "get_secrets"
+        if action.task and action.task.description:
+            messages.append({
+                "role": "user",
+                "content": action.task.description
             })
-            raise
 
+        try:
+            await self.runtime_client.post("/runtime/execute", json={
+                "tools": [self._convert_tool_to_json_schema(tool) for tool in self.tools],
+                "messages": messages,
+                "action": action.model_dump()
+            })
+        except Exception as error:
+            self._handle_error(error, {
+                "action": action.model_dump(),
+                "context": "do_task"
+            })
+    
+    async def get_agents(self, params: GetAgentsParams) -> Dict[str, Any]:
+        """
+        Gets a list of agents in a workspace.
+        
+        Args:
+            params: Parameters for getting agents
+            params.workspace_id: ID of the workspace to get agents from
+            
+        Returns:
+            Dictionary containing a list of agents in the workspace and metadata
+        """
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/agents")
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_agents: {str(e)}")
+            return {"agents": [], "message": "Could not parse agents response"}
+    
+    async def get_files(self, params: GetFilesParams) -> Dict[str, Any]:
+        """
+        Gets files in a workspace.
+        
+        Args:
+            params: Parameters for the file retrieval
+            params.workspace_id: ID of the workspace to get files from
+            
+        Returns:
+            Dictionary containing a list of files in the workspace and metadata
+        """
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/files")
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_files: {str(e)}")
+            return {"files": [], "message": "Could not parse files response"}
+    
+    async def get_secrets(self, params: GetSecretsParams) -> Dict[str, Any]:
+        """
+        Get all secrets for an agent in a workspace.
+        
+        Args:
+            params: Parameters for the secrets retrieval
+            params.workspace_id: ID of the workspace to get secrets from
+            
+        Returns:
+            Dictionary containing a list of agent secrets and metadata
+        """
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/agent-secrets")
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_secrets: {str(e)}")
+            return {"secrets": [], "message": "Could not parse secrets response"}
+    
     async def get_secret_value(self, params: GetSecretValueParams) -> str:
         """
-        Get the value of a specific secret.
+        Get the value of a secret for an agent in a workspace.
         
         Args:
-            params: Parameters specifying the secret to retrieve
+            params: Parameters for the secret value retrieval
+            params.workspace_id: ID of the workspace containing the secret
+            params.secret_id: ID of the secret to retrieve the value for
             
         Returns:
-            The secret value as a string
+            The value of the secret as a string
+        """
+        response = await self.api_client.get(
+            f"/workspaces/{params.workspace_id}/agent-secrets/{params.secret_id}/value"
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_secret_value: {str(e)}")
+            return ""
+    
+    async def get_task_detail(self, params: GetTaskDetailParams) -> Dict[str, Any]:
+        """
+        Retrieves detailed information about a specific task.
+        
+        Args:
+            params: Parameters for retrieving task details
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task to retrieve details for
+            
+        Returns:
+            Detailed information about the requested task
+        """
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/detail")
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_task_detail: {str(e)}")
+            return {"success": False, "message": "Failed to parse task details response"}
+    
+    async def get_tasks(self, params: GetTasksParams) -> Dict[str, Any]:
+        """
+        Gets a list of tasks in a workspace.
+        
+        Args:
+            params: Parameters for getting tasks
+            params.workspace_id: ID of the workspace to retrieve tasks from
+            
+        Returns:
+            Dictionary containing a list of tasks in the workspace and metadata
+        """
+        response = await self.api_client.get(f"/workspaces/{params.workspace_id}/tasks")
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in get_tasks: {str(e)}")
+            return {"tasks": [], "message": "Could not parse tasks response"}
+    
+    async def _handle_root_route(self, request: Request) -> Dict[str, Any]:
+        """
+        Handles the root route for task execution and chat message responses.
+        
+        Args:
+            request: The HTTP request
+            
+        Returns:
+            Success response
             
         Raises:
-            APIError: If the API request fails
-            AuthenticationError: If authentication fails
+            HTTPException: If action type is invalid
         """
         try:
-            response = await self.api_client.get(
-                f"/workspaces/{params.workspace_id}/secrets/{params.collection_id}/{params.secret_id}/value"
-            )
-            return SecretValue(**response["data"]).value
-        except Exception as e:
-            self.handle_error(e, {
-                "params": params.model_dump(),
-                "context": "get_secret_value"
+            body = await request.json()
+            action = ActionSchema.model_validate(body)
+            
+            if action.type == "do-task":
+                do_task_action = DoTaskActionSchema.model_validate(body)
+                await self.do_task(do_task_action)
+            elif action.type == "respond-chat-message":
+                respond_chat_action = RespondChatMessageActionSchema.model_validate(body)
+                await self.respond_to_chat(respond_chat_action)
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid action type: {action.type}")
+            
+            return {"success": True}
+        except Exception as error:
+            self._handle_error(error, {
+                "request": str(request),
+                "context": "handle_root_route"
             })
             raise
+    
+    async def _handle_tool_route(self, request: Request) -> Dict[str, Any]:
+        """
+        Handles execution of a specific tool/capability.
+        
+        Args:
+            request: The HTTP request
+            
+        Returns:
+            The result of the tool execution
+            
+        Raises:
+            HTTPException: If tool name is missing or tool is not found
+        """
+        try:
+            tool_name = request.path_params.get("tool_name")
+            if not tool_name:
+                raise HTTPException(status_code=400, detail="Tool name is required")
+
+            tool = next((t for t in self.tools if t.name == tool_name), None)
+            if not tool:
+                raise HTTPException(status_code=404, detail=f'Tool "{tool_name}" not found')
+
+            body = await request.json()
+            args = body.get("args", {})
+            action = body.get("action")
+            messages = body.get("messages", [])
+
+            # Validate arguments against the tool's schema
+            validated_args = tool.schema.model_validate(args)
+            
+            # Call the tool with validated arguments
+            result = await tool.run({"args": validated_args, "action": action}, messages)
+            
+            return {"result": result}
+        except Exception as error:
+            self._handle_error(error, {
+                "request": str(request),
+                "context": "handle_tool_route"
+            })
+            raise
+    
+    def _handle_error(self, error: Exception, context: Optional[Dict[str, Any]] = None):
+        """
+        Default error handler that logs the error or calls the custom handler.
+        This method is used internally to handle errors consistently across the agent.
+        
+        The handler:
+        1. Uses the custom error handler if provided in options
+        2. Falls back to logging the error with context if no custom handler
+        3. Preserves the original error for re-raising
+        
+        Args:
+            error: The error that occurred
+                Can be any Exception type
+            context: Additional context about where the error occurred
+                Optional dictionary with debugging information
+                Common keys: 'action', 'tool_call', 'context'
+        
+        Example:
+            ```python
+            try:
+                # Some operation that might fail
+                result = await self.process(params)
+            except Exception as e:
+                self._handle_error(e, {
+                    "context": "process",
+                    "params": params
+                })
+                raise
+            ```
+        """
+        handler = self.options.on_error or (lambda err, ctx: logger.error(
+            f"Error in agent operation: {str(err)}",
+            extra={"error": str(err), **(ctx or {})}
+        ))
+        handler(error, context)
+    
+    async def mark_task_as_errored(self, params: MarkTaskAsErroredParams) -> Dict[str, Any]:
+        """
+        Marks a task as errored.
+        
+        Args:
+            params: Parameters for marking the task as errored
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task to mark as errored
+            params.error: Error message or details to associate with the task
+            
+        Returns:
+            The updated task details
+        """
+        logger.info(f"Marking task {params.task_id} as errored in workspace {params.workspace_id}")
+        
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/error",
+            json={"error": params.error}
+        )
+        response.raise_for_status()
+        
+        # Log the response status for debugging
+        logger.info(f"Task error API response status: {response.status_code}")
+        
+        # Check if response has content before trying to parse it
+        if response.content and len(response.content.strip()) > 0:
+            try:
+                return response.json()
+            except Exception as e:
+                logger.error(f"Error parsing JSON response in mark_task_as_errored: {str(e)}")
+                return {"success": True, "message": "Task marked as errored successfully"}
+        else:
+            logger.info(f"Task {params.task_id} marked as errored successfully (empty response)")
+            return {"success": True, "message": "Task marked as errored successfully"}
+    
+    async def process(self, *, messages: List[ChatCompletionMessageParam]) -> ChatCompletion:
+        """
+        Processes a conversation with OpenAI, handling tool calls iteratively until completion.
+        This method is the primary way to test agents locally and process conversations with OpenAI.
+        
+        The method:
+        1. Validates the OpenAI API key
+        2. Processes messages iteratively (up to 10 iterations)
+        3. Handles tool calls from OpenAI
+        4. Manages conversation state
+        5. Returns the final completion
+        
+        Example:
+            ```python
+            agent = Agent(options)
+            result = await agent.process(messages=[
+                {"role": "user", "content": "Hello, how can you help me?"}
+            ])
+            ```
+        
+        Args:
+            messages: The conversation history as a list of message objects
+                Each message should have 'role' and 'content' fields
+                Supported roles: 'system', 'user', 'assistant', 'tool'
+        
+        Returns:
+            The final response from OpenAI as a ChatCompletion object
+            Contains the model's response and any tool calls made
+        
+        Raises:
+            ValueError: If no response is received from OpenAI or max iterations are reached
+            ValueError: If OpenAI API key is not provided
+            ValueError: If tool call arguments are invalid
+        """
+        try:
+            api_key = self.options.openai_api_key or os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError(
+                    'OpenAI API key is required for process(). Please provide it in options or set OPENAI_API_KEY environment variable.'
+                )
+
+            current_messages = list(messages)
+            completion = None
+            iteration_count = 0
+            MAX_ITERATIONS = 10
+
+            while iteration_count < MAX_ITERATIONS:
+                completion = await self.openai.chat.completions.create(
+                    model="gpt-4o",
+                    messages=current_messages,
+                    tools=self.openai_tools if self.tools else None
+                )
+
+                if not completion.choices or not completion.choices[0].message:
+                    raise ValueError('No response from OpenAI')
+
+                last_message = completion.choices[0].message
+
+                # If there are no tool calls, we're done
+                if not last_message.tool_calls:
+                    return completion
+
+                # Process each tool call
+                tool_results = []
+                for tool_call in last_message.tool_calls:
+                    if not tool_call.function:
+                        raise ValueError('Tool call function is missing')
+                    
+                    name = tool_call.function.name
+                    args_str = tool_call.function.arguments
+                    try:
+                        parsed_args = json.loads(args_str)
+                    except json.JSONDecodeError:
+                        raise ValueError(f"Invalid JSON in tool call arguments: {args_str}")
+
+                    try:
+                        # Find the tool in our tools array
+                        tool = next((t for t in self.tools if t.name == name), None)
+                        if not tool:
+                            raise ValueError(f'Tool "{name}" not found')
+
+                        # Call the tool's run method with the parsed arguments
+                        validated_args = tool.schema.model_validate(parsed_args)
+                        result = await tool.run({"args": validated_args}, current_messages)
+                        
+                        tool_results.append({
+                            "role": "tool",
+                            "content": json.dumps(result) if not isinstance(result, str) else result,
+                            "tool_call_id": tool_call.id
+                        })
+                    except Exception as error:
+                        error_message = str(error)
+                        self._handle_error(error, {
+                            "tool_call": tool_call.model_dump(),
+                            "context": "tool_execution"
+                        })
+                        tool_results.append({
+                            "role": "tool",
+                            "content": json.dumps({"error": error_message}),
+                            "tool_call_id": tool_call.id
+                        })
+
+                # Add the assistant's message and tool results to the conversation
+                current_messages.append(last_message.model_dump())
+                current_messages.extend(tool_results)
+                iteration_count += 1
+
+            raise ValueError('Max iterations reached without completion')
+        except Exception as error:
+            self._handle_error(error, {"context": "process"})
+            raise
+    
+    async def request_human_assistance(self, params: RequestHumanAssistanceParams) -> Dict[str, Any]:
+        """
+        Requests human assistance for a task.
+        
+        Args:
+            params: Parameters for requesting assistance
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task needing assistance
+            params.type: Type of assistance needed ('text', 'project-manager-plan-review')
+            params.question: Question or request for the human (string or object)
+            params.agent_dump: Optional agent state/context information
+            
+        Returns:
+            The created assistance request details
+        """
+        question = params.question
+        
+        if isinstance(question, str):
+            question = {
+                "type": "text",
+                "question": question
+            }
+        else:
+            question = {
+                "type": "json",
+                **question
+            }
+        
+        payload = {
+            "type": params.type,
+            "question": question
+        }
+        
+        if params.agent_dump:
+            payload["agentDump"] = params.agent_dump
+        
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/human-assistance",
+            json=payload
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in request_human_assistance: {str(e)}")
+            return {"success": True, "message": "Human assistance requested (response could not be parsed)"}
+    
+    async def respond_to_chat(self, action: RespondChatMessageActionSchema):
+        """
+        Handle a chat message response request.
+        This method can be overridden by extending classes to customize chat handling.
+        
+        Args:
+            action: The chat action to handle
+            action.messages: List of previous chat messages in the conversation
+            action.workspace: The workspace context where the chat is happening
+            action.me: Information about the current agent
+        """
+        messages: List[ChatCompletionMessageParam] = [
+            {
+                "role": "system",
+                "content": self.system_prompt
+            }
+        ]
+
+        if action.messages:
+            for msg in action.messages:
+                messages.append({
+                    "role": "user" if msg.author == "user" else "assistant",
+                    "content": msg.message
+                })
+
+        try:
+            await self.runtime_client.post("/runtime/chat", json={
+                "tools": [self._convert_tool_to_json_schema(tool) for tool in self.tools],
+                "messages": messages,
+                "action": action.model_dump()
+            })
+        except Exception as error:
+            self._handle_error(error, {
+                "action": action.model_dump(),
+                "context": "respond_to_chat"
+            })
+    
+    def run(self):
+        """
+        Runs the agent's HTTP server in a blocking manner.
+        
+        Returns:
+            None
+        """
+        logger.info(f"Agent server starting on port {self.port}")
+        uvicorn.run(self.app, host="0.0.0.0", port=self.port)
+    
+    async def send_chat_message(self, params: SendChatMessageParams) -> Dict[str, Any]:
+        """
+        Sends a chat message from the agent.
+        
+        Args:
+            params: Parameters for sending the chat message
+            params.workspace_id: ID of the workspace where the chat is happening
+            params.agent_id: ID of the agent sending the message
+            params.message: Content of the message to send
+            
+        Returns:
+            The sent message details
+        """
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/agent-chat/{params.agent_id}/message",
+            json={"message": params.message}
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in send_chat_message: {str(e)}")
+            return {"success": True, "message": "Chat message sent (response could not be parsed)"}
+    
+    def _setup_routes(self):
+        """
+        Sets up the FastAPI routes for the agent's HTTP server.
+        Configures health check endpoint and routes for tool execution.
+        """
+        @self.app.get("/health")
+        async def health():
+            return {"status": "ok", "uptime": os.getpid()}
+        
+        @self.app.post("/")
+        async def root(request: Request):
+            return await self._handle_root_route(request)
+        
+        @self.app.post("/tools/{tool_name}")
+        async def tool_route(request: Request):
+            return await self._handle_tool_route(request)
+    
+    async def start(self):
+        """
+        Starts the agent's HTTP server.
+        
+        Returns:
+            None
+            
+        Raises:
+            Exception: If server fails to start
+        """
+        config = uvicorn.Config(
+            app=self.app,
+            host="0.0.0.0",
+            port=self.port,
+            log_level="info"
+        )
+        self.server = uvicorn.Server(config)
+        
+        logger.info(f"Agent server starting on port {self.port}")
+        await self.server.serve()
+    
+    async def stop(self):
+        """
+        Stops the agent's HTTP server.
+        
+        Returns:
+            None
+        """
+        # Close HTTP clients
+        await self.api_client.aclose()
+        await self.runtime_client.aclose()
+        
+        # Stop server if running
+        if self.server:
+            self.server.should_exit = True
+    
+    async def update_task_status(self, params: UpdateTaskStatusParams) -> Dict[str, Any]:
+        """
+        Updates the status of a task.
+        
+        Args:
+            params: Parameters for updating the status
+            params.workspace_id: ID of the workspace containing the task
+            params.task_id: ID of the task to update
+            params.status: New status for the task (e.g., "IN_PROGRESS", "COMPLETED", "ERRORED")
+            
+        Returns:
+            The updated task details
+        """
+        response = await self.api_client.put(
+            f"/workspaces/{params.workspace_id}/tasks/{params.task_id}/status",
+            json={"status": params.status}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    async def upload_file(self, params: UploadFileParams) -> Dict[str, Any]:
+        """
+        Uploads a file to a workspace.
+        
+        Args:
+            params: Parameters for the file upload
+            params.workspace_id: ID of the workspace to upload to
+            params.path: Path where the file should be stored
+            params.task_ids: Optional task IDs to associate with the file
+            params.skip_summarizer: Whether to skip file summarization
+            params.file: The file content to upload (Buffer or string)
+            
+        Returns:
+            The uploaded file details
+        """
+        form_data = {}
+        form_data["path"] = params.path
+        
+        if params.task_ids is not None:
+            if isinstance(params.task_ids, int):
+                task_ids = [params.task_ids]
+            else:
+                task_ids = params.task_ids
+            form_data["taskIds"] = json.dumps(task_ids)
+        
+        if params.skip_summarizer is not None:
+            form_data["skipSummarizer"] = str(params.skip_summarizer).lower()
+        
+        # Prepare file content
+        file_content = params.file
+        if isinstance(file_content, str):
+            file_content = file_content.encode('utf-8')
+        
+        files = {"file": (params.path, file_content)}
+        
+        response = await self.api_client.post(
+            f"/workspaces/{params.workspace_id}/file",
+            data=form_data,
+            files=files
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error parsing JSON response in upload_file: {str(e)}")
+            return {"success": True, "message": "File uploaded (response could not be parsed)"}
+    
+    def _convert_tool_to_json_schema(self, tool: Capability) -> Dict[str, Any]:
+        """
+        Converts a tool/capability to JSON schema format.
+        
+        Args:
+            tool: The capability to convert
+            
+        Returns:
+            The JSON schema representation of the tool
+        """
+        return {
+            "name": tool.name,
+            "description": tool.description,
+            "schema": tool.schema.model_json_schema()
+        }

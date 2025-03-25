@@ -1,26 +1,30 @@
 import os
 import logging
+import sys
 
 def create_logger() -> logging.Logger:
-    """Create a logger with the level specified in LOG_LEVEL environment variable."""
-    logger = logging.getLogger("openserv-agent")
+    """
+    Create a new logger instance.
+    Matches the TypeScript pino logger implementation exactly.
     
-    # Get log level from environment variable, default to DEBUG during troubleshooting
-    log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
+    Returns:
+        A configured logger instance
+    """
+    # Create logger with name 'openserv-agent'
+    logger = logging.getLogger('openserv-agent')
     
-    # Set log level
-    logger.setLevel(getattr(logging, log_level, logging.DEBUG))
+    # Set level from env var or default to 'info'
+    logger.setLevel(getattr(logging, (os.environ.get('LOG_LEVEL') or 'info').upper()))
     
-    # Create console handler with formatter
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
+    # Create console handler
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(handler)
     
-    # Add handler to logger if not already added
-    if not logger.handlers:
-        logger.addHandler(console_handler)
+    # Prevent propagation to root logger
+    logger.propagate = False
     
     return logger
 
 # Create default logger instance
-logger = create_logger() 
+logger = create_logger()

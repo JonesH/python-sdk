@@ -1,45 +1,59 @@
 """
-OpenServ SDK core components.
+OpenServ Python SDK
+
+A framework for building non-deterministic AI agents with advanced cognitive capabilities
+like reasoning, decision-making, and inter-agent collaboration within the OpenServ platform.
 """
 
-import logging
-import os
-
-# Configure logging once for the entire package
-log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+from .agent import Agent, AgentOptions
+from .capability import Capability
+from .logger import create_logger, logger
+from .schema_types import (
+    AgentKind, TaskStatus, Action, DoTaskActionSchema, RespondChatMessageActionSchema,
+    GetFilesParams, GetSecretsParams, GetSecretValueParams, UploadFileParams,
+    MarkTaskAsErroredParams, CompleteTaskParams, SendChatMessageParams,
+    GetTaskDetailParams, GetAgentsParams, GetTasksParams, CreateTaskParams,
+    AddLogToTaskParams, RequestHumanAssistanceParams, UpdateTaskStatusParams,
+    ProcessParams, IntegrationCallRequest, ChatCompletionMessageParam,
+    ProxyConfiguration
 )
-
-# Silence noisy loggers
-logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('httpcore').setLevel(logging.WARNING)
-
-from openserv_sdk.types import AgentOptions
-from openserv_sdk.agent import Agent
-from openserv_sdk.capability import Capability
-from openserv_sdk.exceptions import (
-    OpenServError,
-    ConfigurationError,
-    APIError,
-    AuthenticationError,
-    ToolError,
-    ValidationError,
-    RuntimeError
-)
-
-__version__ = '0.3.0'
 
 __all__ = [
+    # Core classes
     'Agent',
     'AgentOptions',
     'Capability',
-    'OpenServError',
-    'ConfigurationError',
-    'APIError',
-    'AuthenticationError',
-    'ToolError',
-    'ValidationError',
-    'RuntimeError'
-] 
+    
+    # Logger
+    'create_logger',
+    'logger',
+    
+    # Types and schemas
+    'AgentKind',
+    'TaskStatus',
+    'Action',
+    'DoTaskActionSchema',
+    'RespondChatMessageActionSchema',
+    
+    # API parameters
+    'GetFilesParams',
+    'GetSecretsParams',
+    'GetSecretValueParams',
+    'UploadFileParams',
+    'MarkTaskAsErroredParams',
+    'CompleteTaskParams',
+    'SendChatMessageParams',
+    'GetTaskDetailParams',
+    'GetAgentsParams',
+    'GetTasksParams',
+    'CreateTaskParams',
+    'AddLogToTaskParams',
+    'RequestHumanAssistanceParams',
+    'UpdateTaskStatusParams',
+    'ProcessParams',
+    'IntegrationCallRequest',
+    'ChatCompletionMessageParam',
+    'ProxyConfiguration'
+]
+
+__version__ = '0.1.0'
