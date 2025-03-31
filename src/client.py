@@ -138,8 +138,10 @@ class RuntimeClient(BaseClient):
     """Client for the OpenServ Runtime API."""
     def __init__(self, config: APIConfig):
         super().__init__(config)
+        # Ensure runtime_url doesn't end with a slash
+        runtime_url = config.runtime_url.rstrip('/')
         self.client = httpx.AsyncClient(
-            base_url=f"{config.runtime_url}/runtime",
+            base_url=f"{runtime_url}/runtime",
             headers={
                 'Content-Type': 'application/json',
                 'x-openserv-key': config.api_key
