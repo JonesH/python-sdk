@@ -47,9 +47,9 @@ class HumanAssistanceRequest(BaseModel):
     id: int
     agentDump: Optional[Any] = None
     humanResponse: Optional[str] = None
-    question: str
+    question: Any
     status: Literal['pending', 'responded']
-    type: Literal['text', 'project-manager-plan-review']
+    type: Literal['text', 'json', 'project-manager-plan-review', 'insufficient-balance']
 
 class Task(BaseModel):
     id: int

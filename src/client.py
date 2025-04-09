@@ -117,7 +117,7 @@ class OpenServClient(BaseClient):
         workspace_id: int,
         path: str,
         file_content: Any,
-        task_ids: Optional[list[int]] = None,
+        task_ids: Optional[List[int]] = None,
         skip_summarizer: Optional[bool] = None
     ) -> Dict[str, Any]:
         """Upload a file to a workspace."""
@@ -153,8 +153,8 @@ class RuntimeClient(BaseClient):
         self,
         workspace_id: int,
         task_id: int,
-        tools: list[Dict[str, Any]],
-        messages: list[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        messages: List[Dict[str, Any]],
         action: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Execute a task through the runtime."""
