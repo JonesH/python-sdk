@@ -12,14 +12,15 @@ async def test_execute_capability():
     """Test executing a capability function."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-key"
     ))
 
     agent.add_capability(Capability(
         name="testCapability",
         description="A test capability",
         schema=TestParams,
-        run=lambda params, messages: params["args"].input
+        run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
     ))
 
     result = await agent.handle_tool_route("testCapability", {
@@ -44,7 +45,8 @@ async def test_handle_multiple_capabilities():
     """Test handling multiple capabilities."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-key"
     ))
 
     capabilities = [
@@ -52,13 +54,13 @@ async def test_handle_multiple_capabilities():
             name="tool1",
             description="Tool 1",
             schema=TestParams,
-            run=lambda params, messages: params["args"].input
+            run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
         ),
         Capability(
             name="tool2",
             description="Tool 2",
             schema=TestParams,
-            run=lambda params, messages: params["args"].input
+            run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
         )
     ]
 
@@ -79,7 +81,8 @@ def test_duplicate_capability():
     """Test adding duplicate capability."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-key"
     ))
 
     agent.add_capability(Capability(
@@ -101,7 +104,8 @@ def test_duplicate_capabilities():
     """Test adding capabilities with duplicate names."""
     agent = Agent(AgentOptions(
         system_prompt="Test",
-        api_key="test-key"
+        api_key="test-key",
+        openai_api_key="test-key"
     ))
 
     capabilities = [

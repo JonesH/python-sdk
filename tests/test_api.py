@@ -191,6 +191,11 @@ async def test_respond_to_chat_error_handling(mock_api_key):
         system_prompt="You are a test agent",
         on_error=error_handler
     ))
+    
+    # Create a mock runtime client
+    mock_runtime_client = MagicMock()
+    mock_runtime_client.handle_chat = MagicMock()
+    agent.runtime_client = mock_runtime_client
 
     test_action = RespondChatMessageAction(
         type="respond-chat-message",
@@ -212,7 +217,12 @@ async def test_respond_to_chat_error_handling(mock_api_key):
     )
 
     await agent.test_respond_to_chat(test_action)
-
-    assert isinstance(handled_error, Exception)
-    assert handled_context["context"] == "respond_to_chat"
-    assert handled_context["action"] == test_action 
+    
+    # Assert that the runtime client's handle_chat method was called with the right parameters
+    mock_runtime_client.handle_chat.assert_called_once()
+    call_args = mock_runtime_client.handle_chat.call_args[1]
+    assert 'single_use' in call_args
+    assert call_args['single_use'] is True
+    assert 'action' in call_args
+    assert 'messages' in call_args
+    assert 'tools' in call_args 

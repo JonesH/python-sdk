@@ -82,6 +82,19 @@ export OPENAI_API_KEY=your_openai_api_key_here
 
 ## Running the Examples
 
+### Basic Agent Example
+This is the most basic example for you to understand how our sdk works.
+
+1. Navigate to the examples directory and Run the marketing agent:
+```bash
+python3 examples/basic_example.py
+```
+
+3. Test the agent with the following prompt:
+```
+Create a social media post for Twitter about the launch of our new AI-powered productivity tool. Then analyze the engagement metrics with 10 likes, 20 shares, 5 comments, and 100 impressions.
+```
+
 ### Marketing Agent Example
 This example demonstrates a specialized marketing agent with social media capabilities.
 
@@ -90,9 +103,9 @@ This example demonstrates a specialized marketing agent with social media capabi
 python3 examples/marketing_agent.py
 ```
 
-3. Test the agent with the following prompt:
+2. Create a project in OpenServ and test the agent with the following prompt:
 ```
-Create a social media post for Twitter about the launch of our new AI-powered productivity tool. Then analyze the engagement metrics with 10 likes, 20 shares, 5 comments, and 100 impressions.
+Hi, I am Me. Greet me and say goodbye.
 ```
 
 ### Custom Agent Example
@@ -116,14 +129,9 @@ Hello, can you help me with a task?
 ### Twitter Agent Example
 This example demonstrates an agent specifically designed to interact with Twitter.
 
-1. Navigate to the examples directory:
+1. Navigate to the examples directory and Run the Twitter agent:
 ```bash
-cd examples
-```
-
-2. Run the Twitter agent:
-```bash
-python twitter_agent.py
+python3 examples/twitter_agent.py
 ```
 
 3. Test the agent with the following prompt:
