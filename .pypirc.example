@@ -1,0 +1,18 @@
+# This is an example .pypirc file for PyPI authentication
+# To use this file:
+# 1. Rename it to .pypirc (remove .example)
+# 2. Place it in your home directory (~/.pypirc)
+# 3. Replace "pypi-YOUR_TOKEN_VALUE" with your actual PyPI token
+#
+# SECURITY NOTE: This file contains sensitive credentials.
+# - Never commit this file to version control
+# - Use appropriate permissions (chmod 600 ~/.pypirc)
+# - Consider using environment variables instead for CI/CD pipelines
+
+[distutils]
+index-servers =
+    pypi
+
+[pypi]
+username = __token__
+password = pypi-YOUR_TOKEN_VALUE 

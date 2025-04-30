@@ -14,7 +14,7 @@ import json
 from enum import Enum
 from typing import Dict, Any, List, Optional
 
-from src import Agent, Capability, AgentOptions
+from openserv import Agent, Capability, AgentOptions
 
 # Load environment variables from .env file
 load_dotenv()

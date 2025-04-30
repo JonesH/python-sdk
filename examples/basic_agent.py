@@ -4,7 +4,7 @@
 A simple educational example showing core OpenServ SDK concepts.
 """
 
-from src import Agent, Capability, AgentOptions
+from openserv import Agent, Capability, AgentOptions
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import os

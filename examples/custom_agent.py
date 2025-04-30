@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
-from src.agent import Agent
-from src.types import RespondChatMessageAction
+from openserv.agent import Agent
+from openserv.types import RespondChatMessageAction
 
 # Load environment variables from .env file
 load_dotenv()
