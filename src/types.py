@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union, Literal, Callable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from datetime import datetime
 
 class AgentKind(str, Enum):
@@ -103,8 +103,57 @@ class RespondChatMessageAction(AgentAction):
     type: Literal['respond-chat-message']
     messages: List[ChatMessage]
 
+class MessageDict(BaseModel):
+    """
+    A message dict with flexible ID type to match TypeScript SDK.
+    Handles both string and integer IDs.
+    """
+    role: str
+    content: Optional[str] = ''
+    id: Optional[Union[str, int]] = None
+    createdAt: Optional[Union[str, datetime]] = None
+    tool_calls: Optional[Any] = None
+    tool_call_id: Optional[str] = None
+    
+    class Config:
+        extra = "allow"
+
 class ProcessParams(BaseModel):
-    messages: List[Dict[str, str]]
+    """
+    Parameters for the process method.
+    
+    This model handles messages from various sources, including the OpenAI API
+    and the OpenServ runtime, ensuring compatibility with the TypeScript SDK.
+    """
+    messages: List[Union[Dict[str, Any], MessageDict]]
+    
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
+    
+    @root_validator(pre=True)
+    def ensure_message_format(cls, values):
+        """
+        Ensures that messages are in the correct format, handling both dictionary
+        and MessageDict instances, and converting IDs as needed.
+        """
+        if 'messages' in values:
+            # Convert all messages to properly handle ID types
+            formatted_messages = []
+            
+            for msg in values['messages']:
+                # If already a dict, ensure IDs are properly handled
+                if isinstance(msg, dict):
+                    # If the message has an ID, ensure it's kept as is (no string conversion)
+                    formatted_msg = dict(msg)
+                    formatted_messages.append(formatted_msg)
+                else:
+                    # If it's not a dict (e.g., MessageDict), convert to dict
+                    formatted_messages.append(msg.dict())
+            
+            values['messages'] = formatted_messages
+        
+        return values
 
 class AgentOptions(BaseModel):
     system_prompt: str

@@ -3,21 +3,45 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "openserv-agent"
+name = "openserv-sdk"
 version = "0.1.0"
-description = "OpenServ Agent library for building AI agents"
+description = "OpenServ SDK for building AI agents with advanced cognitive capabilities"
+readme = "README.md"
 requires-python = ">=3.8"
-dependencies = [
-    "pydantic>=2.0.0",
-    "openai>=1.0.0",
-    "aiohttp>=3.8.0",
+license = {text = "MIT"}
+authors = [
+    {name = "OpenServ Labs", email = "info@openserv.ai"}
 ]
+keywords = ["ai", "agents", "sdk", "openserv"]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "openai>=1.3.0",
+    "pydantic>=2.4.2",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "aiohttp>=3.8.0",
+    "python-multipart>=0.0.6",
+    "starlette>=0.27.0",
+    "bcrypt>=4.0.1",
+    "python-jose>=3.3.0",
+    "cryptography>=41.0.0",
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://openserv.ai"
+Repository = "https://github.com/openserv-labs/python-sdk"
+Documentation = "https://docs.openserv.ai"
 
 [project.optional-dependencies]
 test = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest-asyncio>=0.25.0",
     "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
 ]
 
 [tool.pytest.ini_options]

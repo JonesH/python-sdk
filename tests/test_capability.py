@@ -20,7 +20,7 @@ async def test_execute_capability():
         name="testCapability",
         description="A test capability",
         schema=TestParams,
-        run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
+        run=lambda run_params, messages: run_params["args"].input
     ))
 
     result = await agent.handle_tool_route("testCapability", {
@@ -34,7 +34,7 @@ def test_validate_capability_schema():
         name="testCapability",
         description="A test capability",
         schema=TestParams,
-        run=lambda params, messages: str(params["args"].input)
+        run=lambda run_params, messages: run_params["args"].input
     )
 
     with pytest.raises(ValueError):
@@ -54,13 +54,13 @@ async def test_handle_multiple_capabilities():
             name="tool1",
             description="Tool 1",
             schema=TestParams,
-            run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
+            run=lambda run_params, messages: run_params["args"].input
         ),
         Capability(
             name="tool2",
             description="Tool 2",
             schema=TestParams,
-            run=lambda data, messages: data.input if hasattr(data, 'input') else data.args.input
+            run=lambda run_params, messages: run_params["args"].input
         )
     ]
 
@@ -89,7 +89,7 @@ def test_duplicate_capability():
         name="test",
         description="Tool 1",
         schema=TestParams,
-        run=lambda params, messages: params["args"].input
+        run=lambda run_params, messages: run_params["args"].input
     ))
 
     with pytest.raises(ValueError, match='Tool with name "test" already exists'):
@@ -97,7 +97,7 @@ def test_duplicate_capability():
             name="test",
             description="Tool 1 duplicate",
             schema=TestParams,
-            run=lambda params, messages: params["args"].input
+            run=lambda run_params, messages: run_params["args"].input
         ))
 
 def test_duplicate_capabilities():
@@ -113,13 +113,13 @@ def test_duplicate_capabilities():
             name="tool1",
             description="Tool 1",
             schema=TestParams,
-            run=lambda params, messages: params["args"].input
+            run=lambda run_params, messages: run_params["args"].input
         ),
         Capability(
             name="tool1",  # Duplicate name
             description="Tool 1 duplicate",
             schema=TestParams,
-            run=lambda params, messages: params["args"].input
+            run=lambda run_params, messages: run_params["args"].input
         )
     ]
 

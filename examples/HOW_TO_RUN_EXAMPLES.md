@@ -38,15 +38,10 @@ source venv/bin/activate
 
 2. Install the required packages:
 ```bash
-# Install the OpenServ SDK in editable mode
+# Install the OpenServ SDK and dependencies
 pip install --upgrade pip
-pip install -e . && pip install -r requirements.txt
-```
-
-3. Verify the installation:
-```bash
-# Check if the packages are installed correctly
-pip list | grep -E "openserv-sdk|python-dotenv|openai"
+pip install -r requirements.txt
+pip install --upgrade openai
 ```
 
 ## 2. Create an account on OpenServ and set up your developer account
@@ -62,7 +57,7 @@ To begin developing an agent for OpenServ, you must first register it:
 3. Add details about your agent:
    - Agent Name: Choose a descriptive name
    - Agent Endpoint: Add the tunneling URL from step 1 as the agent's endpoint URL
-   - Capabilities Description: Describe what your agent can do
+   - Capabilities Description: Add your agent capabilities
 
 ## 4. Create a Secret (API) Key for your Agent
 Note that every agent has its own API Key
@@ -77,22 +72,22 @@ Add your secret keys to your environment variables or to an .env file on your pr
 
 ```bash
 export OPENSERV_API_KEY=your_api_key_here
-export OPENAI_API_KEY=your_openai_api_key_here
+export OPENAI_API_KEY=your_openai_api_key_here # Required for testing agent locally with your own LLM API Key
 ```
 
 ## Running the Examples
 
 ### Basic Agent Example
-This is the most basic example for you to understand how our sdk works.
+This example demonstrates the fundamental capabilities of the OpenServ SDK and how to create a simple agent.
 
-1. Navigate to the examples directory and Run the marketing agent:
+1. Navigate to the examples directory and run the basic agent:
 ```bash
-python3 examples/basic_example.py
+python3 examples/basic_agent.py
 ```
 
-3. Test the agent with the following prompt:
+2. Create a new project at OpenServ, choose your agent and add the following project prompt:
 ```
-Create a social media post for Twitter about the launch of our new AI-powered productivity tool. Then analyze the engagement metrics with 10 likes, 20 shares, 5 comments, and 100 impressions.
+Hi, I am Me. Greet me and say goodbye.
 ```
 
 ### Marketing Agent Example
@@ -103,41 +98,41 @@ This example demonstrates a specialized marketing agent with social media capabi
 python3 examples/marketing_agent.py
 ```
 
-2. Create a project in OpenServ and test the agent with the following prompt:
+2. Create a new project at OpenServ, choose your agent and add the following project prompt. When creating the agent, add Twitter integration to your agent. 
 ```
-Hi, I am Me. Greet me and say goodbye.
-```
-
-### Custom Agent Example
-This example shows how to create a custom agent with specialized response behavior.
-
-1. Navigate to the examples directory:
-```bash
-cd examples
+First, get my Twitter account information. Then create a compelling tweet about our new AI-driven marketing automation platform that increases engagement by 45%. After that, send this tweet to my Twitter account. Finally, analyze these engagement metrics: 25 likes, 12 shares, 8 comments, and 400 impressions to provide recommendations for improving future performance.
 ```
 
-2. Run the custom agent:
-```bash
-python custom_agent.py
+
+## Local Testing
+
+You can test your agents locally using the `process()` method before deploying them to the OpenServ platform:
+
+### Using process() for Local Testing
+
+The `process()` method allows you to test your agent's capabilities locally using OpenAI's API without needing to deploy to the OpenServ platform:
+
+```python
+from openserv.types import ProcessParams
+
+result = await agent.process(ProcessParams(
+    messages=[
+        {"role": "user", "content": "Your message here"}
+    ]
+))
+
+# The response contains the model's reply
+response = result["response"]
+print(response)
 ```
 
-3. Test the agent with the following prompt:
-```
-Hello, can you help me with a task?
-```
+This approach is useful for:
+1. Rapid development and testing of agent capabilities
+2. Debugging your agent's behavior with different inputs
+3. Testing how your agent handles different types of requests
+4. Verifying that your capabilities work as expected before deployment
 
-### Twitter Agent Example
-This example demonstrates an agent specifically designed to interact with Twitter.
-
-1. Navigate to the examples directory and Run the Twitter agent:
-```bash
-python3 examples/twitter_agent.py
-```
-
-3. Test the agent with the following prompt:
-```
-Get my Twitter account information and then send a marketing tweet about our new product launch.
-```
+**Note:** Using the `process()` method requires a valid `OPENAI_API_KEY` to be set in your environment variables.
 
 ## Troubleshooting
 

@@ -1,4 +1,4 @@
-# OpenServ Autonomous AI Agent Development Framework
+# OpenServ Python SDK
 
 [![PyPI version](https://badge.fury.io/py/openserv-sdk.svg)](https://pypi.org/project/openserv-sdk/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,7 +8,7 @@ A powerful Python framework for building non-deterministic AI agents with advanc
 
 ## Table of Contents
 
-- [OpenServ Autonomous AI Agent Development Framework](#openserv-autonomous-ai-agent-development-framework)
+- [OpenServ Python SDK](#openserv-python-sdk)
   - [Table of Contents](#table-of-contents)
   - [Features](#features)
   - [Framework Architecture](#framework-architecture)
@@ -30,17 +30,9 @@ A powerful Python framework for building non-deterministic AI agents with advanc
     - [File Operations](#file-operations)
   - [API Reference](#api-reference)
     - [Task Management](#task-management)
-      - [Create Task](#create-task)
-      - [Update Task Status](#update-task-status)
-      - [Add Task Log](#add-task-log)
     - [Chat \& Communication](#chat--communication)
-      - [Send Message](#send-message)
-      - [Request Human Assistance](#request-human-assistance)
     - [Workspace Management](#workspace-management)
-      - [Get Files](#get-files)
-      - [Upload File](#upload-file)
     - [Integration Management](#integration-management)
-      - [Call Integration](#call-integration)
   - [Advanced Usage](#advanced-usage)
     - [OpenAI Process Runtime](#openai-process-runtime)
     - [Error Handling](#error-handling)
@@ -173,23 +165,24 @@ pip install openserv-sdk
 
    ```python
    from openserv import Agent
+   from openserv.types import AgentOptions
    from pydantic import BaseModel
-   from typing import Optional
 
    class GreetArgs(BaseModel):
        name: str
 
-   agent = Agent(
-       system_prompt="You are a specialized agent that..."
-   )
+   agent = Agent(AgentOptions(
+       system_prompt="You are a specialized agent that...",
+       api_key="your_api_key_here"
+   ))
 
    # Add capabilities using the add_capability method
-   @agent.capability(
+   agent.add_capability(Capability(
        name="greet",
-       description="Greet a user by name"
-   )
-   async def greet(args: GreetArgs) -> str:
-       return f"Hello, {args.name}! How can I help you today?"
+       description="Greet a user by name",
+       schema=GreetArgs,
+       run=lambda run_params, messages: f"Hello, {run_params['args'].name}! How can I help you today?"
+   ))
 
    # Start the agent server
    agent.start()
@@ -214,7 +207,7 @@ Create a simple agent with greeting capabilities:
 from openserv import Agent, Capability
 from openserv.types import AgentOptions
 from pydantic import BaseModel
-from typing import Dict, Any, List
+import os
 
 # Define argument models
 class GreetArgs(BaseModel):
@@ -224,38 +217,33 @@ class FarewellArgs(BaseModel):
     name: str
 
 # Initialize the agent
-agent = Agent(options=AgentOptions(
+agent = Agent(AgentOptions(
     system_prompt="You are a helpful assistant.",
     api_key=os.getenv("OPENSERV_API_KEY")
 ))
 
-# Create and add capabilities
-greet_capability = Capability(
+# Add a capability
+agent.add_capability(Capability(
     name="greet",
     description="Greet a user by name",
     schema=GreetArgs,
-    run=async lambda data, messages: f"Hello, {data['args'].name}! How can I help you today?"
-)
+    run=lambda run_params, messages: f"Hello, {run_params['args'].name}! How can I help you today?"
+))
 
-farewell_capability = Capability(
-    name="farewell",
-    description="Say goodbye to a user",
-    schema=FarewellArgs,
-    run=async lambda data, messages: f"Goodbye, {data['args'].name}! Have a great day!"
-)
-
-help_capability = Capability(
-    name="help",
-    description="Show available commands",
-    schema=BaseModel,
-    run=async lambda data, messages: "Available commands: greet, farewell, help"
-)
-
-# Add capabilities to agent
+# Add multiple capabilities at once
 agent.add_capabilities([
-    greet_capability,
-    farewell_capability,
-    help_capability
+    Capability(
+        name="farewell",
+        description="Say goodbye to a user",
+        schema=FarewellArgs,
+        run=lambda run_params, messages: f"Goodbye, {run_params['args'].name}! Have a great day!"
+    ),
+    Capability(
+        name="help",
+        description="Show available commands",
+        schema=BaseModel,
+        run=lambda run_params, messages: "Available commands: greet, farewell, help"
+    )
 ])
 
 # Start the agent server
@@ -283,24 +271,26 @@ Each capability must include:
 - `name`: Unique identifier for the capability
 - `description`: What the capability does
 - `schema`: Pydantic model defining the parameters
-- `run`: Async function that executes the capability, receiving data dict and messages
+- `run`: Function that executes the capability, receiving validated args and messages
 
 ```python
 from openserv import Agent, Capability
+from openserv.types import AgentOptions
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Optional
+import json
 
 class SummarizeArgs(BaseModel):
     text: str
     max_length: Optional[int] = 100
 
-agent = Agent(options=AgentOptions(
+agent = Agent(AgentOptions(
     system_prompt="You are a helpful assistant."
 ))
 
-# Create summarize capability
-async def summarize_run(data: Dict[str, Any], messages: List[Dict[str, Any]]) -> str:
-    args = data['args']
+# Define a capability function
+async def summarize_run(run_params, messages):
+    args = run_params["args"]
     text, max_length = args.text, args.max_length
 
     # Your summarization logic here
@@ -308,47 +298,46 @@ async def summarize_run(data: Dict[str, Any], messages: List[Dict[str, Any]]) ->
 
     return summary
 
-summarize_capability = Capability(
+# Add capability to agent
+agent.add_capability(Capability(
     name="summarize",
     description="Summarize a piece of text",
     schema=SummarizeArgs,
     run=summarize_run
-)
+))
 
-# Add capability to agent
-agent.add_capability(summarize_capability)
-
-# Add multiple capabilities
+# Add another capability
 class AnalyzeArgs(BaseModel):
     text: str
 
-analyze_capability = Capability(
-    name="analyze",
-    description="Analyze text for sentiment and keywords",
-    schema=AnalyzeArgs,
-    run=async lambda data, messages: json.dumps({"result": "analysis complete"})
-)
-
-help_capability = Capability(
-    name="help",
-    description="Show available commands",
-    schema=BaseModel,
-    run=async lambda data, messages: "Available commands: summarize, analyze, help"
-)
-
-agent.add_capabilities([analyze_capability, help_capability])
+agent.add_capabilities([
+    Capability(
+        name="analyze",
+        description="Analyze text for sentiment and keywords",
+        schema=AnalyzeArgs,
+        run=lambda run_params, messages: json.dumps({"result": "analysis complete"})
+    ),
+    Capability(
+        name="help",
+        description="Show available commands",
+        schema=BaseModel,
+        run=lambda run_params, messages: "Available commands: summarize, analyze, help"
+    )
+])
 ```
 
-Each capability function receives:
+Each capability's run function receives:
 
-- `args`: The validated arguments matching the capability's Pydantic model
-- `action`: The action context containing:
-  - `task`: The current task context (if running as part of a task)
-  - `workspace`: The current workspace context
-  - `me`: Information about the current agent
-  - Other action-specific properties
+- `run_params`: Dict containing:
+  - `args`: The validated arguments matching the capability's schema
+  - `action`: The action context containing:
+    - `task`: The current task context (if running as part of a task)
+    - `workspace`: The current workspace context
+    - `me`: Information about the current agent
+    - Other action-specific properties
+- `messages`: List of messages in the conversation
 
-The function must return a string or coroutine that returns a string.
+The run function must return a string or a coroutine that returns a string.
 
 ### Tasks
 
@@ -390,17 +379,33 @@ await agent.update_task_status(UpdateTaskStatusParams(
 Agents can participate in chat conversations and maintain context:
 
 ```python
+from openserv import Agent, Capability
+from openserv.types import AgentOptions
+from pydantic import BaseModel
+from typing import Optional
+
+class CustomerQueryArgs(BaseModel):
+    query: str
+    context: Optional[str] = None
+
 class CustomerSupportAgent(Agent):
     def __init__(self):
-        super().__init__(
-            system_prompt="You are a customer support agent."
-        )
-
-    @agent.capability(
-        name="respond_to_customer",
-        description="Generate a response to a customer inquiry"
-    )
-    async def respond_to_customer(self, query: str, context: Optional[str] = None) -> str:
+        super().__init__(AgentOptions(
+            system_prompt="You are a customer support agent.",
+            api_key="your_api_key_here"
+        ))
+        
+        self.add_capability(Capability(
+            name="respond_to_customer",
+            description="Generate a response to a customer inquiry",
+            schema=CustomerQueryArgs,
+            run=self.respond_to_customer
+        ))
+    
+    async def respond_to_customer(self, run_params, messages):
+        args = run_params["args"]
+        query, context = args.query, args.context
+        
         # Generate response using the query and optional context
         return f"Thank you for your question about {query}..."
 
@@ -436,10 +441,9 @@ files = await agent.get_files(
 
 ### Task Management
 
-#### Create Task
-
 ```python
-task = await agent.create_task(
+# Create Task
+task = await agent.create_task(CreateTaskParams(
     workspace_id=int,
     assignee=int,
     description=str,
@@ -447,117 +451,76 @@ task = await agent.create_task(
     input=str,
     expected_output=str,
     dependencies=List[int]
-)
-```
+))
 
-#### Update Task Status
-
-```python
-await agent.update_task_status(
+# Update Task Status
+await agent.update_task_status(UpdateTaskStatusParams(
     workspace_id=int,
     task_id=int,
-    status=Literal["to-do", "in-progress", "human-assistance-required", "error", "done", "cancelled"]
-)
-```
+    status=TaskStatus.IN_PROGRESS  # Enum: TO_DO, IN_PROGRESS, HUMAN_ASSISTANCE_REQUIRED, ERROR, DONE, CANCELLED
+))
 
-#### Add Task Log
-
-```python
-await agent.add_log_to_task(
+# Add Task Log
+await agent.add_log_to_task(AddLogToTaskParams(
     workspace_id=int,
     task_id=int,
-    severity=Literal["info", "warning", "error"],
-    type=Literal["text", "openai-message"],
-    body=Union[str, dict]
-)
+    severity="info",  # "info", "warning", "error"
+    type="text",  # "text", "openai-message"
+    body="Log message or JSON object"
+))
 ```
 
 ### Chat & Communication
 
-#### Send Message
-
 ```python
-await agent.send_chat_message(
+# Send Chat Message
+await agent.send_chat_message(SendChatMessageParams(
     workspace_id=int,
     agent_id=int,
     message=str
-)
-```
+))
 
-#### Request Human Assistance
-
-```python
-await agent.request_human_assistance(
+# Request Human Assistance
+await agent.request_human_assistance(RequestHumanAssistanceParams(
     workspace_id=int,
     task_id=int,
-    type=Literal["text", "project-manager-plan-review"],
-    question=Union[str, dict],
-    agent_dump=Optional[dict]
-)
+    type="text",  # "text", "project-manager-plan-review"
+    question="Need help with...",
+    agent_dump={"data": "Additional context"}  # Optional
+))
 ```
 
 ### Workspace Management
 
-#### Get Files
-
 ```python
-files = await agent.get_files(
+# Get Files
+files = await agent.get_files(GetFilesParams(
     workspace_id=int
-)
-```
+))
 
-#### Upload File
-
-```python
-await agent.upload_file(
+# Upload File
+await agent.upload_file(UploadFileParams(
     workspace_id=int,
     path=str,
-    file=Union[bytes, str],
-    skip_summarizer=Optional[bool],
-    task_ids=Optional[List[int]]
-)
+    file="File content or bytes",
+    skip_summarizer=False,  # Optional
+    task_ids=[123]  # Optional
+))
 ```
 
 ### Integration Management
 
-#### Call Integration
-
 ```python
-response = await agent.call_integration(
+# Call Integration
+response = await agent.call_integration(IntegrationCallRequest(
     workspace_id=int,
     integration_id=str,
-    details=dict
-)
-```
-
-Allows agents to interact with external services and APIs that are integrated with OpenServ. This method provides a secure way to make API calls to configured integrations within a workspace. Authentication is handled securely and automatically through the OpenServ platform. This is primarily useful for calling external APIs in a deterministic way.
-
-**Parameters:**
-
-- `workspace_id`: ID of the workspace where the integration is configured
-- `integration_id`: ID of the integration to call (e.g., 'twitter-v2', 'github')
-- `details`: Dictionary containing:
-  - `endpoint`: The endpoint to call on the integration
-  - `method`: HTTP method (GET, POST, etc.)
-  - `data`: Optional payload for the request
-
-**Returns:** The response from the integration endpoint
-
-**Example:**
-
-```python
-# Example: Sending a tweet using Twitter integration
-response = await agent.call_integration(
-    workspace_id=123,
-    integration_id="twitter-v2",
     details={
-        "endpoint": "/2/tweets",
-        "method": "POST",
-        "data": {
-            "text": "Hello from my AI agent!"
-        }
+        "endpoint": "/api/endpoint",
+        "method": "GET",
+        "data": {}  # Optional
     }
-)
+))
 ```
 
 ## Advanced Usage
@@ -567,7 +530,9 @@ response = await agent.call_integration(
 The framework includes built-in OpenAI function calling support through the `process()` method:
 
 ```python
-result = await agent.process(
+from openserv.types import ProcessParams
+
+result = await agent.process(ProcessParams(
     messages=[
         {
             "role": "system",
@@ -578,7 +543,7 @@ result = await agent.process(
             "content": "Create a task to analyze the latest data"
         }
     ]
-)
+))
 ```
 
 ### Error Handling
@@ -610,7 +575,17 @@ except Exception as error:
 Create specialized agents by extending the base Agent class:
 
 ```python
+import json
+from openserv import Agent
+from openserv.types import AgentOptions, TaskStatus
+
 class DataAnalysisAgent(Agent):
+    def __init__(self):
+        super().__init__(AgentOptions(
+            system_prompt="You are a data analysis agent.",
+            api_key="your_api_key_here"
+        ))
+        
     async def do_task(self, action):
         if not action.task:
             return
@@ -619,7 +594,7 @@ class DataAnalysisAgent(Agent):
             await self.update_task_status(
                 workspace_id=action.workspace.id,
                 task_id=action.task.id,
-                status="in-progress"
+                status=TaskStatus.IN_PROGRESS
             )
 
             # Implement custom analysis logic
@@ -633,7 +608,7 @@ class DataAnalysisAgent(Agent):
         except Exception as error:
             await self.handle_error(action, error)
 
-    async def analyze_data(self, input: str):
+    async def analyze_data(self, input_data: str):
         # Custom data analysis implementation
         pass
 

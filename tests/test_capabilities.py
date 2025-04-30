@@ -19,13 +19,8 @@ async def test_execute_capability(mock_api_key):
         openai_api_key="test-openai-key"
     ))
 
-    async def test_run(data, messages):
-        if hasattr(data, 'input'):
-            return data.input
-        elif hasattr(data, 'args') and isinstance(data.args, dict):
-            return data.args.get('input', '')
-        else:
-            return data['args']['input']
+    async def test_run(run_params, messages):
+        return run_params["args"].input
 
     agent.add_capability(Capability(
         name="testCapability",
@@ -44,13 +39,8 @@ def test_validate_capability_schema(mock_api_key):
     class TestNumberInput(BaseModel):
         input: int
 
-    async def test_run(data, messages):
-        if hasattr(data, 'input'):
-            return str(data.input)
-        elif hasattr(data, 'args') and isinstance(data.args, dict):
-            return data.args.get('input', '')
-        else:
-            return data['args']['input']
+    async def test_run(run_params, messages):
+        return str(run_params["args"].input)
 
     capability = Capability(
         name="testCapability",
@@ -70,13 +60,8 @@ async def test_handle_multiple_capabilities(mock_api_key):
         openai_api_key="test-openai-key"
     ))
 
-    async def test_run(data, messages):
-        if hasattr(data, 'input'):
-            return data.input
-        elif hasattr(data, 'args') and isinstance(data.args, dict):
-            return data.args.get('input', '')
-        else:
-            return data['args']['input']
+    async def test_run(run_params, messages):
+        return run_params["args"].input
 
     capabilities = [
         Capability(
@@ -114,13 +99,8 @@ def test_duplicate_capability(mock_api_key):
         openai_api_key="test-openai-key"
     ))
 
-    async def test_run(data, messages):
-        if hasattr(data, 'input'):
-            return data.input
-        elif hasattr(data, 'args') and isinstance(data.args, dict):
-            return data.args.get('input', '')
-        else:
-            return data['args']['input']
+    async def test_run(run_params, messages):
+        return run_params["args"].input
 
     agent.add_capability(Capability(
         name="test",
@@ -146,13 +126,8 @@ def test_duplicate_capabilities_in_list(mock_api_key):
         openai_api_key="test-openai-key"
     ))
 
-    async def test_run(data, messages):
-        if hasattr(data, 'input'):
-            return data.input
-        elif hasattr(data, 'args') and isinstance(data.args, dict):
-            return data.args.get('input', '')
-        else:
-            return data['args']['input']
+    async def test_run(run_params, messages):
+        return run_params["args"].input
 
     capabilities = [
         Capability(
