@@ -61,6 +61,7 @@ class BaseClient:
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, str]] = None,
         files: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Make an HTTP request and handle common error cases."""
         logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ class BaseClient:
                     path,
                     params=params,
                     files=files,
-                    data=json_data,  # For file uploads, json_data is sent as form fields
+                    data=data or json_data,  # Use data parameter for form fields, fallback to json_data
                 )
             else:
                 # Normal JSON request
@@ -227,8 +228,8 @@ class OpenServClient(BaseClient):
         # Use form data instead of JSON for file uploads
         return await self._request(
             'POST',
-            f'/workspaces/{workspace_id}/files',
-            json_data=data,  # This will be sent as form fields with files
+            f'/workspaces/{workspace_id}/file',
+            data=data,  # This will be sent as form fields with files
             files=files
         )
 
