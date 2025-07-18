@@ -213,7 +213,7 @@ class OpenServClient(BaseClient):
         # Use filename from path for the file tuple
         import os
         filename = os.path.basename(path) if path else 'file'
-        files = {'file': (filename, file_content)}
+        files = {'file': (filename, file_content, 'text/plain')}
         
         # Create form data (not JSON)
         data = {'path': path}
