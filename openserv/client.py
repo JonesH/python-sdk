@@ -29,12 +29,8 @@ class BaseClient:
     """Base class for API clients."""
     def __init__(self, config: APIConfig):
         self.config = config
-        # Create client without base_url, will be set by subclasses
+        # Create client without default headers to avoid conflicts
         self.client = httpx.AsyncClient(
-            headers={
-                'Content-Type': 'application/json',
-                'x-openserv-key': config.api_key
-            },
             timeout=30.0  # Set a reasonable default timeout
         )
     
