@@ -68,13 +68,14 @@ class BaseClient:
         try:
             # Pre-serialize JSON with our custom encoder
             content = None
-            headers = {}
+            # Always include API key in headers
+            base_headers = {'x-openserv-key': self.config.api_key}
             
             # Handle file uploads with multipart/form-data
             if files is not None:
                 logger.debug(f"Sending {method} request to {path} with files")
-                # For multipart form data, remove Content-Type header to let httpx set it
-                headers = {'x-openserv-key': self.config.api_key}
+                # For multipart form data, only include API key (no Content-Type)
+                headers = base_headers.copy()
                 response = await self.client.request(
                     method,
                     path,
@@ -85,6 +86,7 @@ class BaseClient:
                 )
             else:
                 # Normal JSON request
+                headers = base_headers.copy()
                 if json_data is not None:
                     content = json.dumps(json_data, cls=DateTimeEncoder).encode('utf-8')
                     headers['Content-Type'] = 'application/json'
