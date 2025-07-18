@@ -210,10 +210,19 @@ class OpenServClient(BaseClient):
     ) -> Dict[str, Any]:
         """Upload a file to a workspace."""
         # Create files dictionary for multipart upload
-        files = {'file': ('file', file_content)}
+        # Use filename from path for the file tuple
+        import os
+        filename = os.path.basename(path) if path else 'file'
+        files = {'file': (filename, file_content)}
         
         # Create form data (not JSON)
         data = {'path': path}
+        
+        # Log upload details for debugging
+        logger.info(f"Uploading file: workspace_id={workspace_id}, path={path}, filename={filename}")
+        logger.info(f"File content type: {type(file_content)}, size: {len(file_content) if hasattr(file_content, '__len__') else 'unknown'}")
+        logger.info(f"Form data: {data}")
+        logger.info(f"Files: {[(k, v[0], type(v[1]).__name__, len(v[1]) if hasattr(v[1], '__len__') else 'unknown') for k, v in files.items()]}")
         
         # Add optional parameters if they are provided
         if task_ids is not None:
