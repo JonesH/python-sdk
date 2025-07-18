@@ -73,13 +73,15 @@ class BaseClient:
             # Handle file uploads with multipart/form-data
             if files is not None:
                 logger.debug(f"Sending {method} request to {path} with files")
-                # For multipart form data, let httpx handle the content
+                # For multipart form data, remove Content-Type header to let httpx set it
+                headers = {'x-openserv-key': self.config.api_key}
                 response = await self.client.request(
                     method,
                     path,
                     params=params,
                     files=files,
                     data=data or json_data,  # Use data parameter for form fields, fallback to json_data
+                    headers=headers,
                 )
             else:
                 # Normal JSON request
